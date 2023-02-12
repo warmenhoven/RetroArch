@@ -19,6 +19,8 @@
 
 #include <string/stdstring.h>
 
+#include <ForceFeedback/ForceFeedback.h>
+#include <ForceFeedback/ForceFeedbackConstants.h>
 #include <IOKit/hid/IOHIDManager.h>
 #include <IOKit/hid/IOHIDKeys.h>
 
@@ -51,6 +53,8 @@ struct iohidmanager_hid_adapter
 {
    uint32_t slot;
    IOHIDDeviceRef handle;
+   FFDeviceObjectReference device;
+   FFEffectObjectReference effects[2];
    uint32_t locationId;
    char name[NAME_MAX_LENGTH];
    apple_input_rec_t *axes;
@@ -265,7 +269,32 @@ static bool iohidmanager_hid_joypad_rumble(void *data, unsigned pad,
    iohidmanager_hid_t        *hid   = (iohidmanager_hid_t*)data;
    if (!hid)
       return false;
-   return pad_connection_rumble(&hid->slots[pad], pad, effect, strength);
+   if (pad_connection_has_interface(hid->slots, pad))
+       return pad_connection_rumble(&hid->slots[pad], pad, effect, strength);
+   else
+   {
+       struct iohidmanager_hid_adapter *adapter = (struct iohidmanager_hid_adapter*)hid->slots[pad].data;
+       if (!adapter)
+          return false;
+       if (strength == 0)
+          FFEffectStop(adapter->effects[effect]);
+       else
+       {
+          // update the strength
+          FFEFFECT eff;
+          FFPERIODIC pf;
+          memset(&eff, 0, sizeof(FFEFFECT));
+          eff.dwSize = sizeof(FFEFFECT);
+          eff.cbTypeSpecificParams = sizeof(FFPERIODIC);
+          eff.lpvTypeSpecificParams = &pf;
+          FFEffectGetParameters(adapter->effects[(unsigned)effect], &eff, FFEP_TYPESPECIFICPARAMS);
+          pf.dwMagnitude = strength;
+          FFEffectSetParameters(adapter->effects[(unsigned)effect], &eff, FFEP_TYPESPECIFICPARAMS);
+
+          FFEffectStart(adapter->effects[(unsigned)effect], 1, 0);
+       }
+       return true;
+   }
 }
 
 static void iohidmanager_hid_device_send_control(void *data,
@@ -486,6 +515,81 @@ static void iohidmanager_hid_device_input_callback(void *data, IOReturn result,
    }
 }
 
+static void iohidmanager_hid_device_ff_shutdown(struct iohidmanager_hid_adapter *adapter)
+{
+   if (!adapter || !adapter->device)
+      return;
+
+   if (adapter->effects[RETRO_RUMBLE_STRONG])
+   {
+      FFEffectStop(adapter->effects[RETRO_RUMBLE_STRONG]);
+      FFDeviceReleaseEffect(adapter->device, adapter->effects[RETRO_RUMBLE_STRONG]);
+   }
+   if (adapter->effects[RETRO_RUMBLE_WEAK])
+   {
+      FFEffectStop(adapter->effects[RETRO_RUMBLE_WEAK]);
+      FFDeviceReleaseEffect(adapter->device, adapter->effects[RETRO_RUMBLE_WEAK]);
+   }
+
+   FFReleaseDevice(adapter->device);
+   adapter->device = 0;
+}
+
+static void iohidmanager_hid_device_ff_setup(struct iohidmanager_hid_adapter *adapter)
+{
+   io_service_t service = IOHIDDeviceGetService(adapter->handle);
+   FFCAPABILITIES features;
+   DWORD rgdwAxes[2];
+   LONG rglDirection[2];
+   FFEFFECT effect;
+   FFENVELOPE envelope;
+   FFPERIODIC pf;
+
+   if (FFIsForceFeedback(service) != FF_OK)
+      return;
+
+   if (FFCreateDevice(service, &adapter->device) != FF_OK)
+      return;
+
+   if ((FFDeviceGetForceFeedbackCapabilities(adapter->device, &features) != FF_OK) ||
+       (features.storageCapacity <= 0) || !(features.supportedEffects & FFCAP_ET_SINE))
+   {
+      iohidmanager_hid_device_ff_shutdown(adapter);
+      return;
+   }
+
+   memset(&effect, 0, sizeof(FFEFFECT));
+   effect.dwSize = sizeof(FFEFFECT);
+   effect.dwFlags = FFEFF_POLAR | FFEFF_OBJECTOFFSETS;
+   effect.dwTriggerButton = FFEB_NOTRIGGER;
+   effect.dwGain = FF_FFNOMINALMAX;
+
+   effect.cAxes = 2;
+   rgdwAxes[0] = FFJOFS_X;
+   rgdwAxes[1] = FFJOFS_Y;
+   effect.rgdwAxes = rgdwAxes;
+
+   rglDirection[0] = 0;
+   rglDirection[1] = 0;
+   effect.rglDirection = rglDirection;
+
+   memset(&envelope, 0, sizeof(FFENVELOPE));
+   effect.lpEnvelope = &envelope;
+   effect.lpEnvelope->dwSize = sizeof(FFENVELOPE);
+
+   effect.cbTypeSpecificParams = sizeof(FFPERIODIC);
+   effect.lpvTypeSpecificParams = &pf;
+   pf.dwMagnitude = 0;
+   pf.lOffset = 0;
+   pf.dwPhase = 0;
+
+   pf.dwPeriod = 142 * 1000;
+   FFDeviceCreateEffect(adapter->device, kFFEffectType_Sine_ID, &effect, &adapter->effects[RETRO_RUMBLE_STRONG]);
+
+   pf.dwPeriod = 5 * 1000;
+   FFDeviceCreateEffect(adapter->device, kFFEffectType_Sine_ID, &effect, &adapter->effects[RETRO_RUMBLE_WEAK]);
+}
+
 static void iohidmanager_hid_device_remove(IOHIDDeviceRef device, iohidmanager_hid_t* hid)
 {
    int i, slot;
@@ -519,6 +623,7 @@ static void iohidmanager_hid_device_remove(IOHIDDeviceRef device, iohidmanager_h
       memset(hid->axes[adapter->slot], 0, sizeof(hid->axes));
 
       pad_connection_pad_deinit(&hid->slots[adapter->slot], adapter->slot);
+      iohidmanager_hid_device_ff_shutdown(adapter);
    }
 
    if (adapter)
@@ -701,6 +806,8 @@ static void iohidmanager_hid_device_add(IOHIDDeviceRef device, iohidmanager_hid_
    else
       IOHIDDeviceRegisterInputValueCallback(device,
             iohidmanager_hid_device_input_callback, adapter);
+
+   iohidmanager_hid_device_ff_setup(adapter);
 
    /* scan for buttons, axis, hats */
    elements_raw = IOHIDDeviceCopyMatchingElements(device, NULL, kIOHIDOptionsTypeNone);

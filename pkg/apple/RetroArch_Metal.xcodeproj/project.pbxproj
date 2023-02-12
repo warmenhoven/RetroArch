@@ -70,6 +70,7 @@
 		0720995B29B1258C001642BB /* libMoltenVK.dylib in Embed Libraries */ = {isa = PBXBuildFile; fileRef = 07B634CF296391FF00B3D78D /* libMoltenVK.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		072976DD296284F600D6E00C /* OpenGL.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 072976DC296284F600D6E00C /* OpenGL.framework */; };
 		0746953A2997393000CCB7BD /* GameController.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 074695362995C03900CCB7BD /* GameController.framework */; };
+		074695392996B7D300CCB7BD /* ForceFeedback.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 074695382996B7D300CCB7BD /* ForceFeedback.framework */; };
 		079371D0296392420059A71C /* libMoltenVK.dylib in Embed Libraries */ = {isa = PBXBuildFile; fileRef = 07B634CF296391FF00B3D78D /* libMoltenVK.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		0795A8C7299A095300D5035D /* CoreHaptics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0795A8C6299A095300D5035D /* CoreHaptics.framework */; };
 		07B634D0296391FF00B3D78D /* libMoltenVK.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 07B634CF296391FF00B3D78D /* libMoltenVK.dylib */; };
@@ -525,6 +526,7 @@
 		074695362995C03900CCB7BD /* GameController.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = GameController.framework; path = System/Library/Frameworks/GameController.framework; sourceTree = SDKROOT; };
 		0776EF3829A005D600AF0237 /* Steam.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Steam.xcconfig; sourceTree = "<group>"; };
 		0795A8C6299A095300D5035D /* CoreHaptics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreHaptics.framework; path = System/Library/Frameworks/CoreHaptics.framework; sourceTree = SDKROOT; };
+		074695382996B7D300CCB7BD /* ForceFeedback.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ForceFeedback.framework; path = System/Library/Frameworks/ForceFeedback.framework; sourceTree = SDKROOT; };
 		07B634CF296391FF00B3D78D /* libMoltenVK.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = libMoltenVK.dylib; path = Frameworks/MoltenVK/dylib/macOS/libMoltenVK.dylib; sourceTree = "<group>"; };
 		089C165DFE840E0CC02AAC07 /* InfoPlist.strings */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.strings; name = InfoPlist.strings; path = OSX/en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		29B97324FDCFA39411CA2CEA /* AppKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppKit.framework; path = /System/Library/Frameworks/AppKit.framework; sourceTree = "<absolute>"; };
@@ -618,6 +620,7 @@
 				07B634D0296391FF00B3D78D /* libMoltenVK.dylib in Frameworks */,
 				D27C508B2228361D00113BC0 /* AVFoundation.framework in Frameworks */,
 				05A8E23C20A63CF50084ABDA /* QuartzCore.framework in Frameworks */,
+				074695392996B7D300CCB7BD /* ForceFeedback.framework in Frameworks */,
 				05A8E23A20A63CED0084ABDA /* IOSurface.framework in Frameworks */,
 				0795A8C7299A095300D5035D /* CoreHaptics.framework in Frameworks */,
 				05A8E23820A63CB40084ABDA /* Metal.framework in Frameworks */,
@@ -1432,6 +1435,7 @@
 				070A883F2A4E7A1B003161C0 /* OpenAL.framework */,
 				0795A8C6299A095300D5035D /* CoreHaptics.framework */,
 				074695362995C03900CCB7BD /* GameController.framework */,
+				074695382996B7D300CCB7BD /* ForceFeedback.framework */,
 				D27C50892228360D00113BC0 /* AudioToolbox.framework */,
 				07B634CF296391FF00B3D78D /* libMoltenVK.dylib */,
 				072976DC296284F600D6E00C /* OpenGL.framework */,
