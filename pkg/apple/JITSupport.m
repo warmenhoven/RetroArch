@@ -28,6 +28,8 @@
 #include <file/file_path.h>
 #include <retro_miscellaneous.h>
 #include "../../verbosity.h"
+#include "runloop.h"
+#include "message_queue.h"
 
 extern int csops(pid_t pid, unsigned int ops, void * useraddr, size_t usersize);
 extern boolean_t exc_server(mach_msg_header_t *, mach_msg_header_t *);
@@ -115,7 +117,10 @@ void jb_start_altkit(void) {
 
       [connection enableUnsignedCodeExecutionWithCompletionHandler:^(BOOL success, NSError *error) {
          if (success)
+         {
+            runloop_msg_queue_push("JIT is available", 1, 200, false, NULL, MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_INFO);
             [[ALTServerManager sharedManager] stopDiscovering];
+         }
          else
             RARCH_WARN("AltServer failed: %s\n", [error.description UTF8String]);
 
