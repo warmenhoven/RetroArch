@@ -921,6 +921,11 @@ enum
    command_event(CMD_EVENT_SAVE_FILES, NULL);
 }
 
+- (void)applicationDidReceiveMemoryWarning:(UIApplication *)application
+{
+    RARCH_LOG("Received memory warning from OS, probably gonna die now\n");
+}
+
 - (void)applicationWillTerminate:(UIApplication *)application
 {
    rarch_stop_draw_observer();
@@ -1070,6 +1075,7 @@ enum
 #if TARGET_OS_IOS
 - (void)didReceiveMetricPayloads:(NSArray<MXMetricPayload *> *)payloads API_AVAILABLE(ios(13.0))
 {
+    runloop_msg_queue_push("Got Metric Payload", 18, 1, 500, false, NULL, MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_INFO);
     for (MXMetricPayload *payload in payloads)
     {
         NSString *json = [[NSString alloc] initWithData:[payload JSONRepresentation] encoding:kCFStringEncodingUTF8];
@@ -1079,6 +1085,7 @@ enum
 
 - (void)didReceiveDiagnosticPayloads:(NSArray<MXDiagnosticPayload *> *)payloads API_AVAILABLE(ios(14.0))
 {
+    runloop_msg_queue_push("Got Diagnostic Payload", 22, 1, 500, false, NULL, MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_INFO);
     for (MXDiagnosticPayload *payload in payloads)
     {
         NSString *json = [[NSString alloc] initWithData:[payload JSONRepresentation] encoding:kCFStringEncodingUTF8];
