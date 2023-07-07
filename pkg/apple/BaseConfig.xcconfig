@@ -30,6 +30,7 @@ OTHER_CFLAGS = $(inherited) -DHAVE_DSP_FILTER
 OTHER_CFLAGS = $(inherited) -DHAVE_DYLIB
 OTHER_CFLAGS = $(inherited) -DHAVE_DYNAMIC
 OTHER_CFLAGS = $(inherited) -DHAVE_EASTEREGG
+OTHER_CFLAGS[arch=arm64*] = $(inherited) -DHAVE_FFMPEG
 OTHER_CFLAGS = $(inherited) -DHAVE_FILTERS_BUILTIN
 OTHER_CFLAGS = $(inherited) -DHAVE_FLAC
 OTHER_CFLAGS = $(inherited) -DHAVE_GETOPT_LONG
@@ -78,6 +79,7 @@ OTHER_CFLAGS = $(inherited) -DHAVE_SSL
 OTHER_CFLAGS = $(inherited) -DHAVE_STB_FONT
 OTHER_CFLAGS = $(inherited) -DHAVE_STB_VORBIS
 OTHER_CFLAGS = $(inherited) -DHAVE_STDIN_CMD
+OTHER_CFLAGS[arch=arm64*] = $(inherited) -DHAVE_SWRESAMPLE
 OTHER_CFLAGS = $(inherited) -DHAVE_THREADS
 OTHER_CFLAGS = $(inherited) -DHAVE_TRANSLATE
 OTHER_CFLAGS = $(inherited) -DHAVE_UPDATE_ASSETS
@@ -106,3 +108,6 @@ HEADER_SEARCH_PATHS = $(inherited) $(SRCBASE) $(SRCBASE)/gfx/include $(SRCBASE)/
 CLANG_CXX_LANGUAGE_STANDARD=c++11
 CLANG_ENABLE_OBJC_ARC=YES
 INFOPLIST_FILE = $(SRCROOT)/OSX/Info_Metal.plist
+
+HEADER_SEARCH_PATHS = $(inherited) /opt/homebrew/include
+OTHER_LDFLAGS[arch=arm64*] = $(inherited) -L/opt/homebrew/lib -lavcodec -lavformat -lavutil -lswresample -lswscale
