@@ -30,6 +30,7 @@ OTHER_CFLAGS = $(inherited) -DHAVE_DSP_FILTER
 OTHER_CFLAGS = $(inherited) -DHAVE_DYLIB
 OTHER_CFLAGS = $(inherited) -DHAVE_DYNAMIC
 OTHER_CFLAGS = $(inherited) -DHAVE_EASTEREGG
+//OTHER_CFLAGS = $(inherited) -DHAVE_FFMPEG
 OTHER_CFLAGS = $(inherited) -DHAVE_FILTERS_BUILTIN
 OTHER_CFLAGS = $(inherited) -DHAVE_FLAC
 OTHER_CFLAGS = $(inherited) -DHAVE_GETOPT_LONG
@@ -78,6 +79,7 @@ OTHER_CFLAGS = $(inherited) -DHAVE_SSL
 OTHER_CFLAGS = $(inherited) -DHAVE_STB_FONT
 OTHER_CFLAGS = $(inherited) -DHAVE_STB_VORBIS
 OTHER_CFLAGS = $(inherited) -DHAVE_STDIN_CMD
+OTHER_CFLAGS = $(inherited) -DHAVE_SWRESAMPLE
 OTHER_CFLAGS = $(inherited) -DHAVE_THREADS
 OTHER_CFLAGS = $(inherited) -DHAVE_TRANSLATE
 OTHER_CFLAGS = $(inherited) -DHAVE_UPDATE_ASSETS
@@ -102,7 +104,8 @@ OTHER_CFLAGS[arch=arm64] = $(inherited) -D__ARM_NEON__ -DHAVE_NEON
 
 SRCBASE  = $(SRCROOT)/../..
 DEPS_DIR = $(SRCBASE)/deps
-HEADER_SEARCH_PATHS = $(inherited) $(SRCBASE) $(SRCBASE)/gfx/include $(SRCBASE)/libretro-common/include $(DEPS_DIR)/libFLAC/include $(DEPS_DIR)/7zip $(DEPS_DIR)/stb $(DEPS_DIR) $(DEPS_DIR)/SPIRV-Cross $(DEPS_DIR)/glslang $(DEPS_DIR)/glslang/glslang/glslang/Public $(DEPS_DIR)/glslang/glslang/glslang/MachineIndependent $(DEPS_DIR)/glslang/glslang/SPIRV $(DEPS_DIR)/glslang/glslang/glslang/OSDependent/Unix
+HEADER_SEARCH_PATHS = $(inherited) $(SRCBASE) $(SRCBASE)/gfx/include $(SRCBASE)/libretro-common/include $(DEPS_DIR)/libFLAC/include $(DEPS_DIR)/7zip $(DEPS_DIR)/stb $(DEPS_DIR) $(DEPS_DIR)/SPIRV-Cross $(DEPS_DIR)/glslang $(DEPS_DIR)/glslang/glslang/glslang/Public $(DEPS_DIR)/glslang/glslang/glslang/MachineIndependent $(DEPS_DIR)/glslang/glslang/SPIRV $(DEPS_DIR)/glslang/glslang/glslang/OSDependent/Unix /opt/homebrew/Cellar/ffmpeg/5.1.2_6/include
+//OTHER_LDFLAGS = -L/opt/homebrew/Cellar/ffmpeg/5.1.2_6/lib -lavcodec -lavformat -lavutil -lswresample -lswscale
 CLANG_CXX_LANGUAGE_STANDARD=c++11
 CLANG_ENABLE_OBJC_ARC=YES
 INFOPLIST_FILE = $(SRCROOT)/OSX/Info_Metal.plist
