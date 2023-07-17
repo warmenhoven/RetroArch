@@ -63,7 +63,7 @@ struct rjson
    char inline_string[512];
 
    /* Must be at the end of the struct, can be allocated with custom size */
-   unsigned char input_buf[512];
+   unsigned char input_buf[2048];
 };
 
 enum _rjson_token
