@@ -700,6 +700,8 @@ void rcheevos_menu_reset_badges(void)
 {
    const rcheevos_locals_t* rcheevos_locals = get_rcheevos_locals();
    rcheevos_racheevo_t* cheevo              = rcheevos_locals->game.achievements;
+   if (!cheevo)
+      return;
    rcheevos_racheevo_t* stop                = cheevo + rcheevos_locals->game.achievement_count;
 
    while (cheevo < stop)
