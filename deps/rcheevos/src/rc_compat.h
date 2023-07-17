@@ -118,4 +118,8 @@ RC_BEGIN_C_DECLS
 
 RC_END_C_DECLS
 
+#ifndef MIN
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#endif
+
 #endif /* RC_COMPAT_H */

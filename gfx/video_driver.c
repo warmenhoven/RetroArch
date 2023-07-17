@@ -5024,7 +5024,7 @@ void video_driver_frame(const void *data, unsigned width,
             last_used_memory  = last_total_memory - mem_stats_free();
          }
 
-         if (_len > 0)
+         if (_len > 0 && status_text[_len-1] != '\0')
          {
             status_text[_len]   = ' ';
             status_text[++_len] = '|';
