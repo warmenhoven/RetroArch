@@ -3826,7 +3826,7 @@ void video_driver_frame(const void *data, unsigned width,
             last_used_memory  = last_total_memory - frontend_driver_get_free_memory();
          }
 
-         if (status_text[buf_pos-1] != '\0')
+         if (buf_pos > 0 && status_text[buf_pos-1] != '\0')
          {
             status_text[buf_pos]   = ' ';
             status_text[++buf_pos] = '|';
