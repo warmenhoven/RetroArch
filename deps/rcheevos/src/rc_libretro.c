@@ -284,6 +284,7 @@ static int rc_libretro_match_value(const char* val, const char* match) {
 }
 
 int rc_libretro_is_setting_allowed(const rc_disallowed_setting_t* disallowed_settings, const char* setting, const char* value) {
+  size_t setting_len = strlen(setting);
   const char* key;
   size_t key_len;
 
@@ -292,13 +293,13 @@ int rc_libretro_is_setting_allowed(const rc_disallowed_setting_t* disallowed_set
     key_len = strlen(key);
 
     if (key[key_len - 1] == '*') {
-      if (memcmp(setting, key, key_len - 1) == 0) {
+      if (memcmp(setting, key, MIN(key_len, setting_len) - 1) == 0) {
         if (rc_libretro_match_value(value, disallowed_settings->value))
           return 0;
       }
     }
     else {
-      if (memcmp(setting, key, key_len + 1) == 0) {
+      if (memcmp(setting, key, MIN(key_len, setting_len) + 1) == 0) {
         if (rc_libretro_match_value(value, disallowed_settings->value))
           return 0;
       }
@@ -310,14 +311,16 @@ int rc_libretro_is_setting_allowed(const rc_disallowed_setting_t* disallowed_set
 
 const rc_disallowed_setting_t* rc_libretro_get_disallowed_settings(const char* library_name) {
   const rc_disallowed_core_settings_t* core_filter = rc_disallowed_core_settings;
-  size_t library_name_length;
+  size_t library_name_length, core_library_name_length;
 
   if (!library_name || !library_name[0])
     return NULL;
 
   library_name_length = strlen(library_name) + 1;
   while (core_filter->library_name) {
-    if (memcmp(core_filter->library_name, library_name, library_name_length) == 0)
+    core_library_name_length = strlen(core_filter->library_name) + 1;
+    if (library_name_length == core_library_name_length &&
+        memcmp(core_filter->library_name, library_name, library_name_length) == 0)
       return core_filter->disallowed_settings;
 
     ++core_filter;
@@ -348,7 +351,7 @@ int rc_libretro_is_system_allowed(const char* library_name, uint32_t console_id)
 
   library_name_length = strlen(library_name) + 1;
   while (core_filter->library_name) {
-    if (memcmp(core_filter->library_name, library_name, library_name_length) == 0) {
+    if (strncmp(core_filter->library_name, library_name, library_name_length) == 0) {
       for (i = 0; i < sizeof(core_filter->disallowed_consoles) / sizeof(core_filter->disallowed_consoles[0]); ++i) {
         if (core_filter->disallowed_consoles[i] == console_id)
           return 0;
@@ -851,9 +854,10 @@ void rc_libretro_hash_set_add(struct rc_libretro_hash_set_t* hash_set,
   const uint32_t path_djb2 = (path != NULL) ? rc_libretro_djb2(path) : 0;
   struct rc_libretro_hash_entry_t* entry = NULL;
   struct rc_libretro_hash_entry_t* scan;
-  struct rc_libretro_hash_entry_t* stop = hash_set->entries + hash_set->entries_count;;
 
-  if (path_djb2) {
+  if (path_djb2 && hash_set->entries)
+  {
+    struct rc_libretro_hash_entry_t* stop = hash_set->entries + hash_set->entries_count;;
     /* attempt to match the path */
     for (scan = hash_set->entries; scan < stop; ++scan) {
       if (scan->path_djb2 == path_djb2) {
