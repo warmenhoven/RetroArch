@@ -2924,7 +2924,7 @@ playlist_t *playlist_init(const playlist_config_t *config)
    playlist->default_core_path              = NULL;
    playlist->base_content_directory         = NULL;
    playlist->entries                        = NULL;
-   playlist->label_display_mode             = LABEL_DISPLAY_MODE_DEFAULT;
+   playlist->label_display_mode             = LABEL_DISPLAY_MODE_REMOVE_PARENTHESES_AND_BRACKETS;
    playlist->right_thumbnail_mode           = PLAYLIST_THUMBNAIL_MODE_DEFAULT;
    playlist->left_thumbnail_mode            = PLAYLIST_THUMBNAIL_MODE_DEFAULT;
    playlist->thumbnail_match_mode           = PLAYLIST_THUMBNAIL_MATCH_MODE_DEFAULT;
