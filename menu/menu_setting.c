@@ -8431,6 +8431,11 @@ static void general_write_handler(rarch_setting_t *setting)
 
    switch (setting->enum_idx)
    {
+      case MENU_ENUM_LABEL_VIDEO_DRIVER:
+         if (!(runloop_get_flags() & RUNLOOP_FLAG_CORE_RUNNING) ||
+             retroarch_ctl(RARCH_CTL_IS_DUMMY_CORE, NULL))
+            rarch_cmd = CMD_EVENT_REINIT;
+         break;
       case MENU_ENUM_LABEL_VIDEO_SHADERS_ENABLE:
 #if defined(HAVE_CG) || defined(HAVE_GLSL) || defined(HAVE_SLANG) || defined(HAVE_HLSL)
          video_shader_toggle(settings, true);
