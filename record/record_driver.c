@@ -31,6 +31,7 @@
 #include "../defaults.h"
 
 #include "record_driver.h"
+#include "drivers/record_avf.h"
 #include "drivers/record_ffmpeg.h"
 #include "drivers/record_wav.h"
 
@@ -46,6 +47,9 @@ static const record_driver_t record_null = {
 };
 
 const record_driver_t *record_drivers[] = {
+#ifdef HAVE_AVF
+   &record_avf,
+#endif
 #ifdef HAVE_FFMPEG
    &record_ffmpeg,
 #endif
