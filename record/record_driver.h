@@ -134,6 +134,7 @@ struct recording
 typedef struct recording recording_state_t;
 
 extern const record_driver_t record_ffmpeg;
+extern const record_driver_t record_avf;
 
 /**
  * config_get_record_driver_options:
