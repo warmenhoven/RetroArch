@@ -57,6 +57,10 @@
 #include "../frontend/drivers/platform_darwin.m"
 #endif
 
+#ifdef HAVE_AVF
+#include "../record/drivers/record_avf.m"
+#endif
+
 #ifdef HAVE_COREAUDIO3
 #include "../audio/drivers/coreaudio3.m"
 #endif
