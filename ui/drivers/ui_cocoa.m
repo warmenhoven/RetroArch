@@ -48,6 +48,11 @@
 
 #include "ui_cocoa.h"
 
+#ifdef HAVE_KSCRASH
+#include <KSCrash.h>
+#include <KSCrashInstallationStandard.h>
+#endif
+
 #ifdef HAVE_MIST
 #include "steam/steam.h"
 #endif
@@ -592,6 +597,17 @@ static ui_application_t ui_application_cocoa = {
 
 - (void)applicationDidFinishLaunching:(NSNotification *)aNotification
 {
+#ifdef HAVE_KSCRASH
+   KSCrash *ks = [KSCrash sharedInstance];
+#ifdef DEBUG
+   ks.monitoring = KSCrashMonitorTypeDebuggerSafe;
+#else
+   ks.monitoring = KSCrashMonitorTypeProductionSafe;
+#endif
+   KSCrashInstallation *installation = [KSCrashInstallationStandard sharedInstance];
+   [installation install];
+#endif
+
    unsigned i;
    apple_platform   = self;
    [self.window setAcceptsMouseMovedEvents: YES];

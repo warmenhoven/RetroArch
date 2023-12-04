@@ -47,6 +47,15 @@
 #import <MetricKit/MetricKit.h>
 #import <MetricKit/MXMetricManager.h>
 
+#ifdef HAVE_KSCRASH
+#include "KSCrash.h"
+#include "KSCrashInstallationStandard.h"
+// we want to set our own basePath but can't do that on the sharedInstance without this
+@interface KSCrash ()
+@property(nonatomic,readwrite,retain) NSString* basePath;
+@end
+#endif
+
 #if defined(HAVE_COCOA_METAL) || defined(HAVE_COCOATOUCH)
 #import "JITSupport.h"
 id<ApplePlatform> apple_platform;
@@ -517,6 +526,20 @@ enum
 
 - (void)applicationDidFinishLaunching:(UIApplication *)application
 {
+#ifdef HAVE_KSCRASH
+   KSCrash *ks = [KSCrash sharedInstance];
+#if TARGET_OS_IOS
+   ks.basePath = [[NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject] stringByAppendingPathComponent:@"KSCrash"];
+#endif
+#ifdef DEBUG
+   ks.monitoring = KSCrashMonitorTypeDebuggerSafe;
+#else
+   ks.monitoring = KSCrashMonitorTypeProductionSafe;
+#endif
+   KSCrashInstallationStandard *installation = [KSCrashInstallationStandard sharedInstance];
+   [installation install];
+#endif
+
    char arguments[]   = "retroarch";
    char       *argv[] = {arguments,   NULL};
    int argc           = 1;

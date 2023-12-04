@@ -68,10 +68,12 @@
 		0720995829B1258C001642BB /* AppKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 29B97324FDCFA39411CA2CEA /* AppKit.framework */; };
 		0720995929B1258C001642BB /* IOKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 84DD5EB41A89E737007336C1 /* IOKit.framework */; };
 		0720995B29B1258C001642BB /* libMoltenVK.dylib in Embed Libraries */ = {isa = PBXBuildFile; fileRef = 07B634CF296391FF00B3D78D /* libMoltenVK.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		072255AA2B33F39F00D346F2 /* KSCrash in Resources */ = {isa = PBXBuildFile; fileRef = 072255A92B33F39F00D346F2 /* KSCrash */; };
 		072976DD296284F600D6E00C /* OpenGL.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 072976DC296284F600D6E00C /* OpenGL.framework */; };
 		0746953A2997393000CCB7BD /* GameController.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 074695362995C03900CCB7BD /* GameController.framework */; };
 		079371D0296392420059A71C /* libMoltenVK.dylib in Embed Libraries */ = {isa = PBXBuildFile; fileRef = 07B634CF296391FF00B3D78D /* libMoltenVK.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		0795A8C7299A095300D5035D /* CoreHaptics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0795A8C6299A095300D5035D /* CoreHaptics.framework */; };
+		079A82FF2B33F40700C4B0B1 /* KSCrash in Frameworks */ = {isa = PBXBuildFile; productRef = 079A82FE2B33F40700C4B0B1 /* KSCrash */; };
 		07B634D0296391FF00B3D78D /* libMoltenVK.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 07B634CF296391FF00B3D78D /* libMoltenVK.dylib */; };
 		5061C8A41AE47E510080AE14 /* libz.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 5061C8A31AE47E510080AE14 /* libz.dylib */; };
 		509F0C9D1AA23AFC00619ECC /* griffin_objc.m in Sources */ = {isa = PBXBuildFile; fileRef = 509F0C9C1AA23AFC00619ECC /* griffin_objc.m */; };
@@ -519,6 +521,7 @@
 		05F2874120F2BEEA00632D47 /* task_patch.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = task_patch.c; sourceTree = "<group>"; };
 		070A883F2A4E7A1B003161C0 /* OpenAL.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = OpenAL.framework; path = System/Library/Frameworks/OpenAL.framework; sourceTree = SDKROOT; };
 		0720996029B1258C001642BB /* RetroArch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RetroArch.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		072255A92B33F39F00D346F2 /* KSCrash */ = {isa = PBXFileReference; lastKnownFileType = wrapper; name = KSCrash; path = Frameworks/KSCrash; sourceTree = "<group>"; };
 		072976DC296284F600D6E00C /* OpenGL.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = OpenGL.framework; path = System/Library/Frameworks/OpenGL.framework; sourceTree = SDKROOT; };
 		074695362995C03900CCB7BD /* GameController.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = GameController.framework; path = System/Library/Frameworks/GameController.framework; sourceTree = SDKROOT; };
 		0776EF3829A005D600AF0237 /* Steam.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Steam.xcconfig; sourceTree = "<group>"; };
@@ -621,6 +624,7 @@
 				05A8E23820A63CB40084ABDA /* Metal.framework in Frameworks */,
 				05269A6220ABF20500C29F1E /* MetalKit.framework in Frameworks */,
 				5061C8A41AE47E510080AE14 /* libz.dylib in Frameworks */,
+				079A82FF2B33F40700C4B0B1 /* KSCrash in Frameworks */,
 				070A88402A4E7A1B003161C0 /* OpenAL.framework in Frameworks */,
 				84DD5EA91A89E4BE007336C1 /* CoreAudio.framework in Frameworks */,
 				84DD5EB31A89E6C0007336C1 /* AudioUnit.framework in Frameworks */,
@@ -1392,6 +1396,7 @@
 		29B97314FDCFA39411CA2CEA /* RetroArch */ = {
 			isa = PBXGroup;
 			children = (
+				072255A92B33F39F00D346F2 /* KSCrash */,
 				686201AB24B823A800EBDD95 /* RetroArch.entitlements */,
 				05D7753120A55D2700646447 /* BaseConfig.xcconfig */,
 				05422E5C2140CFC500F09961 /* Metal.xcconfig */,
@@ -1529,6 +1534,9 @@
 			dependencies = (
 			);
 			name = RetroArch;
+			packageProductDependencies = (
+				079A82FE2B33F40700C4B0B1 /* KSCrash */,
+			);
 			productInstallPath = "$(HOME)/Applications";
 			productName = RetroArch;
 			productReference = 8D1107320486CEB800E47090 /* RetroArch.app */;
@@ -1551,6 +1559,8 @@
 				en,
 			);
 			mainGroup = 29B97314FDCFA39411CA2CEA /* RetroArch */;
+			packageReferences = (
+			);
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -1590,6 +1600,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				072255AA2B33F39F00D346F2 /* KSCrash in Resources */,
 				8D11072B0486CEB800E47090 /* InfoPlist.strings in Resources */,
 				84DD5EB81A89F1C7007336C1 /* retroarch.icns in Resources */,
 				9254B33125FA0BA300A1E0DA /* assets.zip in Resources */,
@@ -2080,6 +2091,13 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		079A82FE2B33F40700C4B0B1 /* KSCrash */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KSCrash;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 29B97313FDCFA39411CA2CEA /* Project object */;
 }

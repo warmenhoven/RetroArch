@@ -21,6 +21,8 @@
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
+		07028BC82B1D906B00790F9D /* KSCrash in Frameworks */ = {isa = PBXBuildFile; productRef = 07028BC72B1D906B00790F9D /* KSCrash */; };
+		07028BCA2B1D907600790F9D /* KSCrash in Frameworks */ = {isa = PBXBuildFile; productRef = 07028BC92B1D907600790F9D /* KSCrash */; };
 		070A88432A4E7AA9003161C0 /* OpenAL.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 070A88422A4E7AA9003161C0 /* OpenAL.framework */; };
 		0712A7722B807AE400C9765F /* TVServices.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0712A7712B807AE400C9765F /* TVServices.framework */; };
 		0712A7762B807AE400C9765F /* ContentProvider.m in Sources */ = {isa = PBXBuildFile; fileRef = 0712A7752B807AE400C9765F /* ContentProvider.m */; };
@@ -196,6 +198,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		07028BC52B1D8FB400790F9D /* KSCrash */ = {isa = PBXFileReference; lastKnownFileType = wrapper; name = KSCrash; path = Frameworks/KSCrash; sourceTree = "<group>"; };
 		070A88422A4E7AA9003161C0 /* OpenAL.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = OpenAL.framework; path = System/Library/Frameworks/OpenAL.framework; sourceTree = SDKROOT; };
 		0712A7702B807AE400C9765F /* RetroArchTopShelfExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = RetroArchTopShelfExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		0712A7712B807AE400C9765F /* TVServices.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = TVServices.framework; path = Library/Frameworks/TVServices.framework; sourceTree = DEVELOPER_DIR; };
@@ -508,6 +511,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				07028BC82B1D906B00790F9D /* KSCrash in Frameworks */,
 				9210C2F224B3A19100E6FE7C /* MetalKit.framework in Frameworks */,
 				9210C2F324B3A19100E6FE7C /* Metal.framework in Frameworks */,
 				92CC05C721FEDD0B00FF79F0 /* MobileCoreServices.framework in Frameworks */,
@@ -542,6 +546,7 @@
 				926C77EF21FD263800103EDE /* AudioToolbox.framework in Frameworks */,
 				07FA26CA2BD8B74900E1AF91 /* MoltenVK.xcframework in Frameworks */,
 				073734A62A093ACA00BF7397 /* AltKit in Frameworks */,
+				07028BCA2B1D907600790F9D /* KSCrash in Frameworks */,
 				0718BC632ABBAFB6001F2CBE /* Network.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -572,6 +577,7 @@
 		0789FC2D2A07845300D042B7 /* Packages */ = {
 			isa = PBXGroup;
 			children = (
+				07028BC52B1D8FB400790F9D /* KSCrash */,
 				0789FC2E2A07845300D042B7 /* AltKit */,
 			);
 			name = Packages;
@@ -1353,6 +1359,7 @@
 			name = RetroArchiOS;
 			packageProductDependencies = (
 				0789FC2F2A07847E00D042B7 /* AltKit */,
+				07028BC72B1D906B00790F9D /* KSCrash */,
 			);
 			productName = RetroArch;
 			productReference = 9204BE2B1D319EF300BD49DB /* RetroArch.app */;
@@ -1378,6 +1385,7 @@
 			name = RetroArchTV;
 			packageProductDependencies = (
 				073734A52A093ACA00BF7397 /* AltKit */,
+				07028BC92B1D907600790F9D /* KSCrash */,
 			);
 			productName = RetroArchTV;
 			productReference = 926C77D721FD1E6500103EDE /* RetroArchTV.app */;
@@ -2394,6 +2402,7 @@
 					"-DHAVE_IFINFO",
 					"-DHAVE_IMAGEVIEWER",
 					"-DHAVE_KEYMAPPER",
+					"-DHAVE_KSCRASH",
 					"-DHAVE_LANGEXTRA",
 					"-DHAVE_LIBRETRODB",
 					"-DHAVE_MAIN",
@@ -2523,6 +2532,7 @@
 					"-DHAVE_IFINFO",
 					"-DHAVE_IMAGEVIEWER",
 					"-DHAVE_KEYMAPPER",
+					"-DHAVE_KSCRASH",
 					"-DHAVE_LANGEXTRA",
 					"-DHAVE_LIBRETRODB",
 					"-DHAVE_MAIN",
@@ -2645,6 +2655,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		07028BC72B1D906B00790F9D /* KSCrash */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KSCrash;
+		};
+		07028BC92B1D907600790F9D /* KSCrash */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KSCrash;
+		};
 		073734A52A093ACA00BF7397 /* AltKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = AltKit;
