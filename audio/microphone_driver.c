@@ -58,6 +58,9 @@ microphone_driver_t *microphone_drivers[] = {
 #ifdef HAVE_SDL2
       &microphone_sdl, /* Microphones are not supported in SDL 1 */
 #endif
+#ifdef HAVE_COREAUDIO
+      &microphone_coreaudio,
+#endif
       &microphone_null,
       NULL,
 };
