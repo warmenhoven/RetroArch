@@ -948,6 +948,9 @@ AUDIO
 
 #ifdef HAVE_COREAUDIO
 #include "../audio/drivers/coreaudio.c"
+#ifdef HAVE_MICROPHONE
+#include "../audio/drivers_microphone/coreaudio_microphone.c"
+#endif
 #endif
 
 #if defined(HAVE_WASAPI) || ((_WIN32_WINNT >= 0x0602) && !defined(__WINRT__))
