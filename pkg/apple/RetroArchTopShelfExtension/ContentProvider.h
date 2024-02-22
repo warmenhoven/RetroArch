@@ -8,7 +8,7 @@
 
 #import <TVServices/TVServices.h>
 
-#define kRetroArchAppGroup @"group.com.libretro.dist.tvos.RetroArchAppGroup"
+#define kRetroArchAppGroup @"group.org.warmenhoven.RetroArchAppGroup"
 
 @interface ContentProvider : TVTopShelfContentProvider
 
