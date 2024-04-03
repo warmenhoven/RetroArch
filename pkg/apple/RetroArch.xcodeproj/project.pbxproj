@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0758E4022BBDDC7700969799 /* griffin_glslang.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 0758E4012BBDDC7700969799 /* griffin_glslang.cpp */; };
+		0758E4032BBDDC7700969799 /* griffin_glslang.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 0758E4012BBDDC7700969799 /* griffin_glslang.cpp */; };
+		07C847FD2BBDD967004A854C /* griffin_cpp.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 07C847FC2BBDD967004A854C /* griffin_cpp.cpp */; };
+		07C847FE2BBDD967004A854C /* griffin_cpp.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 07C847FC2BBDD967004A854C /* griffin_cpp.cpp */; };
 		1DDD58160DA1D0A300B32029 /* MainMenu.xib in Resources */ = {isa = PBXBuildFile; fileRef = 1DDD58140DA1D0A300B32029 /* MainMenu.xib */; };
 		500845251B89300700CE6073 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = 089C165CFE840E0CC02AAC07 /* InfoPlist.strings */; };
 		500845261B89300700CE6073 /* MainMenu.xib in Resources */ = {isa = PBXBuildFile; fileRef = 1DDD58140DA1D0A300B32029 /* MainMenu.xib */; };
@@ -74,6 +78,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		0758E4012BBDDC7700969799 /* griffin_glslang.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = griffin_glslang.cpp; path = ../../griffin/griffin_glslang.cpp; sourceTree = "<group>"; };
+		07C847FC2BBDD967004A854C /* griffin_cpp.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = griffin_cpp.cpp; path = ../../griffin/griffin_cpp.cpp; sourceTree = "<group>"; };
 		089C165DFE840E0CC02AAC07 /* InfoPlist.strings */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.strings; name = InfoPlist.strings; path = OSX/en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		1DDD58150DA1D0A300B32029 /* MainMenu.xib */ = {isa = PBXFileReference; lastKnownFileType = file.xib; name = MainMenu.xib; path = OSX/en.lproj/MainMenu.xib; sourceTree = "<group>"; };
 		29B97324FDCFA39411CA2CEA /* AppKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppKit.framework; path = /System/Library/Frameworks/AppKit.framework; sourceTree = "<absolute>"; };
@@ -219,6 +225,8 @@
 		840222FA1A889EA2009AB261 /* Core */ = {
 			isa = PBXGroup;
 			children = (
+				0758E4012BBDDC7700969799 /* griffin_glslang.cpp */,
+				07C847FC2BBDD967004A854C /* griffin_cpp.cpp */,
 				509F0C9C1AA23AFC00619ECC /* griffin_objc.m */,
 				840222FB1A889EE2009AB261 /* griffin.c */,
 			);
@@ -332,6 +340,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				0758E4022BBDDC7700969799 /* griffin_glslang.cpp in Sources */,
+				07C847FD2BBDD967004A854C /* griffin_cpp.cpp in Sources */,
 				500845291B89300700CE6073 /* griffin_objc.m in Sources */,
 				5008452A1B89300700CE6073 /* griffin.c in Sources */,
 			);
@@ -341,6 +351,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				0758E4032BBDDC7700969799 /* griffin_glslang.cpp in Sources */,
+				07C847FE2BBDD967004A854C /* griffin_cpp.cpp in Sources */,
 				509F0C9D1AA23AFC00619ECC /* griffin_objc.m in Sources */,
 				840222FC1A889EE2009AB261 /* griffin.c in Sources */,
 			);
@@ -588,6 +600,7 @@
 					"-DHAVE_GFX_WIDGETS",
 					"-DOSX",
 					"-DHAVE_OPENGL",
+					"-DHAVE_OPENGL_CORE",
 					"-DHAVE_CC_RESAMPLER",
 					"-DHAVE_GLSL",
 					"-DINLINE=inline",
@@ -675,6 +688,7 @@
 					"-DHAVE_GFX_WIDGETS",
 					"-DOSX",
 					"-DHAVE_OPENGL",
+					"-DHAVE_OPENGL_CORE",
 					"-DHAVE_CC_RESAMPLER",
 					"-DHAVE_GLSL",
 					"-DINLINE=inline",
