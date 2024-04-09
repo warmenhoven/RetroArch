@@ -6841,9 +6841,6 @@ int runloop_iterate(void)
    video_driver_state_t               *video_st = video_state_get_ptr();
    recording_state_t              *recording_st = recording_state_get_ptr();
    camera_driver_state_t             *camera_st = camera_state_get_ptr();
-#if defined(HAVE_COCOATOUCH)
-   uico_driver_state_t  *uico_st                = uico_state_get_ptr();
-#endif
    settings_t *settings                         = config_get_ptr();
    runloop_state_t *runloop_st                  = &runloop_state;
    bool vrr_runloop_enable                      = settings->bools.vrr_runloop_enable;
@@ -6961,10 +6958,7 @@ int runloop_iterate(void)
          /* FIXME: This is an ugly way to tell Netplay this... */
          netplay_driver_ctl(RARCH_NETPLAY_CTL_PAUSE, NULL);
 #endif
-#if defined(HAVE_COCOATOUCH)
-         if (!(uico_st->flags & UICO_ST_FLAG_IS_ON_FOREGROUND))
-#endif
-            retro_sleep(10);
+         retro_sleep(10);
          return 1;
       case RUNLOOP_STATE_PAUSE:
 #ifdef HAVE_NETWORKING
@@ -7250,10 +7244,7 @@ end:
 
          if (sleep_ms > 0)
          {
-#if defined(HAVE_COCOATOUCH)
-            if (!(uico_state_get_ptr()->flags & UICO_ST_FLAG_IS_ON_FOREGROUND))
-#endif
-               retro_sleep(sleep_ms);
+            retro_sleep(sleep_ms);
          }
 
          return 1;
