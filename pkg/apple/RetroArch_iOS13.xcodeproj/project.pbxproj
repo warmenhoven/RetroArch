@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 46;
+	objectVersion = 54;
 	objects = {
 
 /* Begin PBXAggregateTarget section */
@@ -1764,7 +1764,7 @@
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MARKETING_VERSION = 1.18.0;
 				ONLY_ACTIVE_ARCH = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = com.libretro.dist.tvos.RetroArch.RetroArchTopShelfExtension;
+				PRODUCT_BUNDLE_IDENTIFIER = com.libretro.dist.RetroArch.RetroArchTopShelfExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = appletvos;
 				SKIP_INSTALL = YES;
@@ -1832,7 +1832,7 @@
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MARKETING_VERSION = 1.18.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.libretro.dist.tvos.RetroArch.RetroArchTopShelfExtension;
+				PRODUCT_BUNDLE_IDENTIFIER = com.libretro.dist.RetroArch.RetroArchTopShelfExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = appletvos;
 				SKIP_INSTALL = YES;
@@ -1874,7 +1874,7 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer";
 				CODE_SIGN_RESOURCE_RULES_PATH = "$(SDKROOT)/ResourceRules.plist";
-				CURRENT_PROJECT_VERSION = 1.18.0;
+				CURRENT_PROJECT_VERSION = 23;
 				DEPS_DIR = "$(SRCBASE)/deps";
 				DEVELOPMENT_TEAM = UK699V5ZS8;
 				ENABLE_BITCODE = NO;
@@ -1901,7 +1901,9 @@
 					../../gfx/include,
 				);
 				INFOPLIST_FILE = "$(SRCROOT)/iOS/Info.plist";
-				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
+				INFOPLIST_KEY_CFBundleDisplayName = RetroArch;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
+				IPHONEOS_DEPLOYMENT_TARGET = 14.2;
 				LD_NO_PIE = NO;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -1922,7 +1924,7 @@
 				);
 				"OTHER_CFLAGS[sdk=iphoneos*]" = "$(inherited)";
 				"OTHER_CFLAGS[sdk=iphonesimulator*]" = "$(inherited)";
-				PRODUCT_BUNDLE_IDENTIFIER = com.libretro.RetroArchiOS11;
+				PRODUCT_BUNDLE_IDENTIFIER = com.libretro.dist.RetroArch;
 				PRODUCT_NAME = RetroArch;
 				PROVISIONING_PROFILE = "";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -1949,7 +1951,7 @@
 				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Development";
 				CODE_SIGN_RESOURCE_RULES_PATH = "$(SDKROOT)/ResourceRules.plist";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1.18.0;
+				CURRENT_PROJECT_VERSION = 23;
 				DEPS_DIR = "$(SRCBASE)/deps";
 				DEVELOPMENT_TEAM = UK699V5ZS8;
 				ENABLE_BITCODE = NO;
@@ -1976,7 +1978,9 @@
 					../../gfx/include,
 				);
 				INFOPLIST_FILE = "$(SRCROOT)/iOS/Info.plist";
-				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
+				INFOPLIST_KEY_CFBundleDisplayName = RetroArch;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
+				IPHONEOS_DEPLOYMENT_TARGET = 14.2;
 				LD_NO_PIE = NO;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -1996,7 +2000,7 @@
 				);
 				"OTHER_CFLAGS[sdk=iphoneos*]" = "$(inherited)";
 				"OTHER_CFLAGS[sdk=iphonesimulator*]" = "$(inherited)";
-				PRODUCT_BUNDLE_IDENTIFIER = com.libretro.RetroArchiOS11;
+				PRODUCT_BUNDLE_IDENTIFIER = com.libretro.dist.RetroArch;
 				PRODUCT_NAME = RetroArch;
 				PROVISIONING_PROFILE = "";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -2040,7 +2044,7 @@
 				CODE_SIGN_ENTITLEMENTS = tvOS/RetroArchTV.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1.18.0;
+				CURRENT_PROJECT_VERSION = 2;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEPS_DIR = "$(SRCBASE)/deps";
 				DEVELOPMENT_TEAM = UK699V5ZS8;
@@ -2089,7 +2093,7 @@
 				OTHER_CFLAGS = "$(inherited)";
 				"OTHER_CFLAGS[sdk=appletvos*]" = "$(inherited)";
 				"OTHER_CFLAGS[sdk=appletvsimulator*]" = "$(inherited)";
-				PRODUCT_BUNDLE_IDENTIFIER = com.libretro.dist.tvos.RetroArch;
+				PRODUCT_BUNDLE_IDENTIFIER = com.libretro.dist.RetroArch;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = appletvos;
@@ -2130,7 +2134,7 @@
 				CODE_SIGN_ENTITLEMENTS = tvOS/RetroArchTV.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1.18.0;
+				CURRENT_PROJECT_VERSION = 2;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEPS_DIR = "$(SRCBASE)/deps";
 				DEVELOPMENT_TEAM = UK699V5ZS8;
@@ -2179,7 +2183,7 @@
 				OTHER_CFLAGS = "$(inherited)";
 				"OTHER_CFLAGS[sdk=appletvos*]" = "$(inherited)";
 				"OTHER_CFLAGS[sdk=appletvsimulator*]" = "$(inherited)";
-				PRODUCT_BUNDLE_IDENTIFIER = com.libretro.dist.tvos.RetroArch;
+				PRODUCT_BUNDLE_IDENTIFIER = com.libretro.dist.RetroArch;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = appletvos;
@@ -2236,7 +2240,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = RetroArchWidgetExtension/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = RetroArchWidgetExtension;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2022 RetroArch. All rights reserved.";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.games";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2024 Libretro. All rights reserved.";
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -2247,7 +2252,7 @@
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = com.libretro.RetroArchiOS11.RetroArchWidgetExtension;
+				PRODUCT_BUNDLE_IDENTIFIER = com.libretro.dist.RetroArch.RetroArchWidgetExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
@@ -2306,7 +2311,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = RetroArchWidgetExtension/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = RetroArchWidgetExtension;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2022 RetroArch. All rights reserved.";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.games";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2024 Libretro. All rights reserved.";
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -2316,11 +2322,12 @@
 				MARKETING_VERSION = 1.18.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = com.libretro.RetroArchiOS11.RetroArchWidgetExtension;
+				PRODUCT_BUNDLE_IDENTIFIER = com.libretro.dist.RetroArch.RetroArchWidgetExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OPTIMIZATION_LEVEL = "-Owholemodule";
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -2369,6 +2376,7 @@
 					"-DHAVE_ACCESSIBILITY",
 					"-DHAVE_AL",
 					"-DHAVE_ALTKIT",
+					"-DHAVE_APPLE_STORE",
 					"-DHAVE_AUDIOMIXER",
 					"-DHAVE_BTSTACK",
 					"-DHAVE_BUILTINGLSLANG",
@@ -2499,6 +2507,7 @@
 					"-DHAVE_ACCESSIBILITY",
 					"-DHAVE_AL",
 					"-DHAVE_ALTKIT",
+					"-DHAVE_APPLE_STORE",
 					"-DHAVE_AUDIOMIXER",
 					"-DHAVE_BTSTACK",
 					"-DHAVE_BUILTINGLSLANG",
