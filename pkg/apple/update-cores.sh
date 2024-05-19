@@ -202,8 +202,14 @@ else
                 virtualxt
                 geolith
                 vircon32
-                #melondsds
+                melondsds
                 2048
+                mu
+                dosbox_pure
+                pokemini
+                nxengine
+                prboom
+                mednafen_ngp
             )
             for dylib in "${exports[@]}" ; do
                 find_dylib $dylib
