@@ -13397,7 +13397,9 @@ static bool setting_append_list(
                   general_write_handler,
                   general_read_handler,
                   SD_FLAG_NONE);
+#ifndef OSX
             MENU_SETTINGS_LIST_CURRENT_ADD_CMD(list, list_info, CMD_EVENT_REINIT);
+#endif
 
 #if defined(_WIN32) && !defined(_XBOX) && !defined(__WINRT__)
          CONFIG_BOOL(

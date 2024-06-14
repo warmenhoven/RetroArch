@@ -18,6 +18,7 @@
 #else
 #include <AvailabilityMacros.h>
 #endif
+#include <TargetConditionals.h>
 
 #ifndef __IPHONE_OS_VERSION_MAX_ALLOWED
 #define __IPHONE_OS_VERSION_MAX_ALLOWED 00000
@@ -26,6 +27,8 @@
 #if defined(HAVE_ZLIB) || defined(HAVE_7ZIP)
 #define HAVE_COMPRESSION 1
 #endif
+
+#include "../gfx/display_servers/dispserv_apple.m"
 
 #if defined(HAVE_COCOATOUCH) || defined(HAVE_COCOA) || defined(HAVE_COCOA_METAL)
 
