@@ -27,9 +27,7 @@
 		0712A77A2B807AE400C9765F /* RetroArchTopShelfExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 0712A7702B807AE400C9765F /* RetroArchTopShelfExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		0718BC632ABBAFB6001F2CBE /* Network.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0718BC5F2ABBA807001F2CBE /* Network.framework */; };
 		073734A42A093A5700BF7397 /* JITSupport.m in Sources */ = {isa = PBXBuildFile; fileRef = 92A1F81727006CAE00DEAD2A /* JITSupport.m */; };
-		073734A62A093ACA00BF7397 /* AltKit in Frameworks */ = {isa = PBXBuildFile; productRef = 073734A52A093ACA00BF7397 /* AltKit */; };
 		076CA50D2B695C2C00840EA5 /* libz.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 076CA50C2B695C2C00840EA5 /* libz.tbd */; };
-		0789FC302A07847E00D042B7 /* AltKit in Frameworks */ = {isa = PBXBuildFile; productRef = 0789FC2F2A07847E00D042B7 /* AltKit */; };
 		07B7872D29E8FE8F0088B74F /* filters in Resources */ = {isa = PBXBuildFile; fileRef = 07B7872C29E8FE8F0088B74F /* filters */; };
 		07F7FB022A2DA8B800037C04 /* filters in Resources */ = {isa = PBXBuildFile; fileRef = 07F7FB012A2DA8B800037C04 /* filters */; };
 		07FA26C82BD8B2FB00E1AF91 /* MoltenVK.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 07FA26C62BD8B2EA00E1AF91 /* MoltenVK.xcframework */; };
@@ -526,7 +524,6 @@
 				9204BE1B1D319EF300BD49DB /* CoreAudio.framework in Frameworks */,
 				9204BE1C1D319EF300BD49DB /* UIKit.framework in Frameworks */,
 				9204BE1D1D319EF300BD49DB /* Foundation.framework in Frameworks */,
-				0789FC302A07847E00D042B7 /* AltKit in Frameworks */,
 				9204BE1E1D319EF300BD49DB /* CoreGraphics.framework in Frameworks */,
 				9204BE1F1D319EF300BD49DB /* GLKit.framework in Frameworks */,
 				9204BE201D319EF300BD49DB /* OpenGLES.framework in Frameworks */,
@@ -541,7 +538,6 @@
 				926C77F121FD26E800103EDE /* GameController.framework in Frameworks */,
 				926C77EF21FD263800103EDE /* AudioToolbox.framework in Frameworks */,
 				07FA26CA2BD8B74900E1AF91 /* MoltenVK.xcframework in Frameworks */,
-				073734A62A093ACA00BF7397 /* AltKit in Frameworks */,
 				0718BC632ABBAFB6001F2CBE /* Network.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1353,7 +1349,6 @@
 			);
 			name = RetroArchiOS;
 			packageProductDependencies = (
-				0789FC2F2A07847E00D042B7 /* AltKit */,
 			);
 			productName = RetroArch;
 			productReference = 9204BE2B1D319EF300BD49DB /* RetroArch.app */;
@@ -1378,7 +1373,6 @@
 			);
 			name = RetroArchTV;
 			packageProductDependencies = (
-				073734A52A093ACA00BF7397 /* AltKit */,
 			);
 			productName = RetroArchTV;
 			productReference = 926C77D721FD1E6500103EDE /* RetroArchTV.app */;
@@ -2080,7 +2074,6 @@
 					"-DHAVE_7ZIP",
 					"-DHAVE_ACCESSIBILITY",
 					"-DHAVE_AL",
-					"-DHAVE_ALTKIT",
 					"-DHAVE_AUDIOMIXER",
 					"-DHAVE_BTSTACK",
 					"-DHAVE_BUILTINGLSLANG",
@@ -2237,7 +2230,6 @@
 					"-DHAVE_7ZIP",
 					"-DHAVE_ACCESSIBILITY",
 					"-DHAVE_AL",
-					"-DHAVE_ALTKIT",
 					"-DHAVE_AUDIOMIXER",
 					"-DHAVE_BTSTACK",
 					"-DHAVE_BUILTINGLSLANG",
@@ -2390,17 +2382,6 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
-
-/* Begin XCSwiftPackageProductDependency section */
-		073734A52A093ACA00BF7397 /* AltKit */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = AltKit;
-		};
-		0789FC2F2A07847E00D042B7 /* AltKit */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = AltKit;
-		};
-/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 96AFAE1C16C1D4EA009DE44C /* Project object */;
 }
