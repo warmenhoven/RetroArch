@@ -4,7 +4,7 @@
 //
 
 // QT Support
-QT_INSTALL        = /usr/local/opt/qt
+QT_INSTALL        = /opt/homebrew/opt/qt@5
 QT_FRAMEWORK_PATH = $(QT_INSTALL)/lib
 QT_FRAMEWORKS     = -framework QtWidgets -framework QtGui -framework QtConcurrent -framework QtNetwork -framework QtCore
 QT_VERSION        = 5
