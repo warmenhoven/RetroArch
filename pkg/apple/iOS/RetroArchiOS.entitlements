@@ -8,7 +8,7 @@
 	<string>production</string>
 	<key>com.apple.developer.icloud-container-identifiers</key>
 	<array>
-		<string>iCloud.com.libretro.dist.RetroArch</string>
+		<string>iCloud.org.warmenhoven.RetroArch</string>
 	</array>
 	<key>com.apple.developer.icloud-services</key>
 	<array>
