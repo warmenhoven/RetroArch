@@ -2,6 +2,9 @@
 <Workspace
    version = "1.0">
    <FileRef
+      location = "group:Warmenhoven.xcconfig">
+   </FileRef>
+   <FileRef
       location = "container:RetroArch_Metal.xcodeproj">
    </FileRef>
    <FileRef
