@@ -1,0 +1,35 @@
+//
+//  Warmenhoven.xcconfig
+//  RetroArch_Metal
+//
+//  Created by Eric Warmenhoven on 5/22/24.
+//
+
+// Configuration settings file format documentation can be found at:
+// https://help.apple.com/xcode/#/dev745c5c974
+
+DEVELOPMENT_TEAM = 9T7KKTRSN6
+
+OTHER_CFLAGS = $(inherited) -DHAVE_ICLOUD
+OTHER_CFLAGS = $(inherited) -DkRetroArchAppGroup=@\"group.org.warmenhoven.RetroArchAppGroup\"
+
+OTHER_CFLAGS[sdk=macosx*] = $(inherited) -DHAVE_MAIN -DHAVE_CORE_INFO_CACHE -DHAVE_ONLINE_UPDATER -DHAVE_UPDATE_CORES
+OTHER_CFLAGS[sdk=iphone*] = $(inherited) -DHAVE_APPLE_STORE
+OTHER_CFLAGS[sdk=appletv*] = $(inherited) -DHAVE_APPLE_STORE
+
+PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*] = org.warmenhoven.RetroArch
+IOS_BUNDLE_IDENTIFIER = org.warmenhoven.RetroArch
+TVOS_BUNDLE_IDENTIFIER = org.warmenhoven.RetroArch
+
+IOS_CODE_SIGN_ENTITLEMENTS = iOS/RetroArchiOS.entitlements
+TVOS_CODE_SIGN_ENTITLEMENTS = tvOS/RetroArchTV.entitlements
+TVOS_TOPSHELF_CODE_SIGN_ENTITLEMENTS = tvOS/RetroArchTopShelf.entitlements
+
+CODE_SIGN_STYLE[sdk=macosx*] = Automatic
+
+MACOSX_DEPLOYMENT_TARGET = 15.1
+RA_IPHONEOS_DEPLOYMENT_TARGET = 18.1
+
+ONLY_ACTIVE_ARCH = YES
+
+LLVM_LTO = YES_THIN
