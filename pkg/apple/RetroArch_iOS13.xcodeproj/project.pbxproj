@@ -205,6 +205,7 @@
 		076CA50C2B695C2C00840EA5 /* libz.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libz.tbd; path = Platforms/AppleTVOS.platform/Developer/SDKs/AppleTVOS17.2.sdk/usr/lib/libz.tbd; sourceTree = DEVELOPER_DIR; };
 		077AB2C82BFB0E28002BBE2F /* AppStore.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = AppStore.xcconfig; path = iOS/AppStore.xcconfig; sourceTree = "<group>"; };
 		0789FC2E2A07845300D042B7 /* AltKit */ = {isa = PBXFileReference; lastKnownFileType = wrapper; name = AltKit; path = Frameworks/AltKit; sourceTree = "<group>"; };
+		07AC67F02BFEF22F0054B664 /* Warmenhoven.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Warmenhoven.xcconfig; sourceTree = "<group>"; };
 		07B7872C29E8FE8F0088B74F /* filters */ = {isa = PBXFileReference; lastKnownFileType = folder; path = filters; sourceTree = "<group>"; };
 		07BC17D12BD2ACAE0005A0F2 /* MoltenVK.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MoltenVK.framework; path = tvOS/Frameworks/MoltenVK.framework; sourceTree = "<group>"; };
 		07F7FB012A2DA8B800037C04 /* filters */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; name = filters; path = iOS/filters; sourceTree = SOURCE_ROOT; };
@@ -1213,6 +1214,7 @@
 		96AFAE1A16C1D4EA009DE44C = {
 			isa = PBXGroup;
 			children = (
+				07AC67F02BFEF22F0054B664 /* Warmenhoven.xcconfig */,
 				077AB2C82BFB0E28002BBE2F /* AppStore.xcconfig */,
 				0789FC2D2A07845300D042B7 /* Packages */,
 				96AFAE9C16C1D976009DE44C /* Main Entry Core */,
@@ -1703,6 +1705,7 @@
 /* Begin XCBuildConfiguration section */
 		0712A77C2B807AE400C9765F /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 07AC67F02BFEF22F0054B664 /* Warmenhoven.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
@@ -1731,6 +1734,7 @@
 		};
 		0712A77D2B807AE400C9765F /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 07AC67F02BFEF22F0054B664 /* Warmenhoven.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
@@ -1778,6 +1782,7 @@
 		};
 		9204BE291D319EF300BD49DB /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 07AC67F02BFEF22F0054B664 /* Warmenhoven.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = Default;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
@@ -1828,6 +1833,7 @@
 		};
 		9204BE2A1D319EF300BD49DB /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 07AC67F02BFEF22F0054B664 /* Warmenhoven.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = Default;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
@@ -1878,6 +1884,7 @@
 		};
 		926C77E721FD1E6700103EDE /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 07AC67F02BFEF22F0054B664 /* Warmenhoven.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = "App Icon & Top Shelf Image";
 				ASSETCATALOG_COMPILER_LAUNCHIMAGE_NAME = LaunchImage;
@@ -1921,6 +1928,7 @@
 		};
 		926C77E821FD1E6700103EDE /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 07AC67F02BFEF22F0054B664 /* Warmenhoven.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = "App Icon & Top Shelf Image";
 				ASSETCATALOG_COMPILER_LAUNCHIMAGE_NAME = LaunchImage;
@@ -1964,6 +1972,7 @@
 		};
 		9292D6F328F549D500E47A75 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 07AC67F02BFEF22F0054B664 /* Warmenhoven.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
@@ -1990,6 +1999,7 @@
 		};
 		9292D6F428F549D500E47A75 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 07AC67F02BFEF22F0054B664 /* Warmenhoven.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;

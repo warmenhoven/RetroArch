@@ -1,0 +1,22 @@
+//
+//  Warmenhoven.xcconfig
+//  RetroArch_Metal
+//
+//  Created by Eric Warmenhoven on 5/22/24.
+//
+
+// Configuration settings file format documentation can be found at:
+// https://help.apple.com/xcode/#/dev745c5c974
+
+DEVELOPMENT_TEAM = 9T7KKTRSN6
+
+OTHER_CFLAGS = $(inherited) -DHAVE_ICLOUD
+OTHER_CFLAGS = $(inherited) -DkRetroArchAppGroup=@\"group.org.warmenhoven.RetroArchGroup\"
+
+OTHER_CFLAGS[sdk=macos*] = $(inherited) -DHAVE_MAIN -DHAVE_CORE_INFO_CACHE -DHAVE_ONLINE_UPDATER -DHAVE_UPDATE_CORES
+
+IOS_BUNDLE_IDENTIFIER = org.warmenhoven.RetroArch
+TVOS_BUNDLE_IDENTIFIER = org.warmenhoven.RetroArch
+
+IOS_CODE_SIGN_ENTITLEMENTS = iOS/RetroArchiOS.entitlements
+TVOS_CODE_SIGN_ENTITLEMENTS = tvOS/RetroArchTV.entitlements
