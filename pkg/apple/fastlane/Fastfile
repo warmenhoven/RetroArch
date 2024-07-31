@@ -112,6 +112,7 @@ platform :ios do
     )
     ensure_git_status_clean
     git_pull
+    sh("git checkout -b master --track origin/master")
     sh("git log -1")
     app_store_build_number(
       app_identifier: "com.libretro.dist.RetroArch",
@@ -199,6 +200,7 @@ platform :appletvos do
     )
     ensure_git_status_clean
     git_pull
+    sh("git checkout -b master --track origin/master")
     sh("git log -1")
     app_store_build_number(
       app_identifier: "com.libretro.dist.RetroArch",
