@@ -1,5 +1,6 @@
 name: iOS App Store
 on:
+  # push:
   schedule:
     - cron: '0 0 * * *'
 jobs:
@@ -58,3 +59,14 @@ jobs:
         run: |
           cd pkg/apple
           fastlane ios build
+      - name: Get short SHA
+        id: slug
+        run: echo "sha8=$(echo ${GITHUB_SHA} | cut -c1-8)" >> $GITHUB_OUTPUT
+      - name: Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: RetroArch-iOS-${{ steps.slug.outputs.sha8 }}
+          overwrite: true
+          path: |
+            pkg/apple/RetroArch.ipa
+            pkg/apple/buildlog/*
