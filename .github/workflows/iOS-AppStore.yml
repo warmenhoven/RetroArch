@@ -18,6 +18,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ env.BRANCH_NAME }}
+      - name: Setup Deps
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh repo clone warmenhoven/retroarch-apple-deps
+          sudo mv retroarch-apple-deps /usr/local/share
       - name: Setup Certs
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
