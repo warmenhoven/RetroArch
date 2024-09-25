@@ -29,6 +29,7 @@
 
 #include <retro_timers.h>
 #include <compat/apple_compat.h>
+#include <streams/file_stream.h>
 #include <string/stdstring.h>
 
 #include "../../ui/drivers/ui_cocoa.h"
@@ -48,6 +49,7 @@ typedef struct cocoa_vk_ctx_data
    int swap_interval;
    unsigned width;
    unsigned height;
+   vk_t *driver;
 } cocoa_vk_ctx_data_t;
 
 /* TODO/FIXME - static globals */
@@ -55,6 +57,9 @@ static unsigned g_vk_minor          = 0;
 static unsigned g_vk_major          = 0;
 /* Forward declaration */
 CocoaView *cocoaview_get(void);
+
+static void  *pipeline_cache_data = NULL;
+static size_t pipeline_cache_size = 0;
 
 static uint32_t cocoa_vk_gfx_ctx_get_flags(void *data)
 {
@@ -78,6 +83,18 @@ static void cocoa_vk_gfx_ctx_destroy(void *data)
    if (cocoa_ctx->vk.context.queue_lock)
       slock_free(cocoa_ctx->vk.context.queue_lock);
    memset(&cocoa_ctx->vk, 0, sizeof(cocoa_ctx->vk));
+
+   pipeline_cache_data = cocoa_ctx->driver->pipelines.cache_data;
+   cocoa_ctx->driver->pipelines.cache_data = NULL;
+   pipeline_cache_size = cocoa_ctx->driver->pipelines.cache_data_size;
+   if (pipeline_cache_data)
+   {
+      settings_t *settings           = config_get_ptr();
+      const char *shader_dir         = settings->paths.directory_video_shader;
+      char cache_path[PATH_MAX_LENGTH];
+      fill_pathname_join_special(cache_path, shader_dir, "cache", sizeof(cache_path));
+      filestream_write_file(cache_path, pipeline_cache_data, pipeline_cache_size);
+   }
 
    free(cocoa_ctx);
 }
@@ -271,6 +288,8 @@ static bool cocoa_vk_gfx_ctx_set_video_mode(void *data,
 
 static void *cocoa_vk_gfx_ctx_init(void *video_driver)
 {
+   vk_t *vk = (vk_t*)video_driver;
+
    cocoa_vk_ctx_data_t *cocoa_ctx = (cocoa_vk_ctx_data_t*)
    calloc(1, sizeof(cocoa_vk_ctx_data_t));
 
@@ -282,6 +301,21 @@ static void *cocoa_vk_gfx_ctx_init(void *video_driver)
    {
       free(cocoa_ctx);
       return NULL;
+   }
+
+   cocoa_ctx->driver = vk;
+   if (!pipeline_cache_data)
+   {
+      settings_t *settings           = config_get_ptr();
+      const char *shader_dir         = settings->paths.directory_video_shader;
+      char cache_path[PATH_MAX_LENGTH];
+      fill_pathname_join_special(cache_path, shader_dir, "cache", sizeof(cache_path));
+      filestream_read_file(cache_path, &pipeline_cache_data, &pipeline_cache_size);
+   }
+   if (pipeline_cache_data)
+   {
+      vk->pipelines.cache_data = pipeline_cache_data;
+      vk->pipelines.cache_data_size = pipeline_cache_size;
    }
 
    return cocoa_ctx;
@@ -314,6 +348,8 @@ static bool cocoa_vk_gfx_ctx_set_video_mode(void *data,
 
 static void *cocoa_vk_gfx_ctx_init(void *video_driver)
 {
+   vk_t *vk = (vk_t*)video_driver;
+
    cocoa_vk_ctx_data_t *cocoa_ctx = (cocoa_vk_ctx_data_t*)
    calloc(1, sizeof(cocoa_vk_ctx_data_t));
 
@@ -325,6 +361,21 @@ static void *cocoa_vk_gfx_ctx_init(void *video_driver)
    {
       free(cocoa_ctx);
       return NULL;
+   }
+
+   cocoa_ctx->driver = vk;
+   if (!pipeline_cache_data)
+   {
+      settings_t *settings           = config_get_ptr();
+      const char *shader_dir         = settings->paths.directory_video_shader;
+      char cache_path[PATH_MAX_LENGTH];
+      fill_pathname_join_special(cache_path, shader_dir, "cache", sizeof(cache_path));
+      filestream_read_file(cache_path, &pipeline_cache_data, &pipeline_cache_size);
+   }
+   if (pipeline_cache_data)
+   {
+      vk->pipelines.cache_data = pipeline_cache_data;
+      vk->pipelines.cache_data_size = pipeline_cache_size;
    }
 
    return cocoa_ctx;
