@@ -221,6 +221,8 @@ typedef struct vk
       VkDescriptorSetLayout set_layout;
       VkPipelineLayout layout;
       VkPipelineCache cache;
+      void *cache_data;
+      size_t cache_data_size;
    } pipelines;
 
    struct
@@ -3226,8 +3228,8 @@ static void vulkan_init_static_resources(vk_t *vk)
    cache.sType                = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
    cache.pNext                = NULL;
    cache.flags                = 0;
-   cache.initialDataSize      = 0;
-   cache.pInitialData         = NULL;
+   cache.initialDataSize      = vk->pipelines.cache_data_size;
+   cache.pInitialData         = vk->pipelines.cache_data;
 
    vkCreatePipelineCache(vk->context->device,
          &cache, NULL, &vk->pipelines.cache);
@@ -3251,6 +3253,9 @@ static void vulkan_init_static_resources(vk_t *vk)
 static void vulkan_deinit_static_resources(vk_t *vk)
 {
    int i;
+   vkGetPipelineCacheData(vk->context->device, vk->pipelines.cache, &vk->pipelines.cache_data_size, NULL);
+   vk->pipelines.cache_data = realloc(vk->pipelines.cache_data, vk->pipelines.cache_data_size);
+   vkGetPipelineCacheData(vk->context->device, vk->pipelines.cache, &vk->pipelines.cache_data_size, vk->pipelines.cache_data);
    vkDestroyPipelineCache(vk->context->device,
          vk->pipelines.cache, NULL);
    vulkan_destroy_texture(
@@ -3348,6 +3353,9 @@ static void vulkan_free(void *data)
          vk->ctx_driver->destroy(vk->ctx_data);
       video_context_driver_free();
    }
+
+   if (vk->pipelines.cache_data)
+      free(vk->pipelines.cache_data);
 
    scaler_ctx_gen_reset(&vk->readback.scaler_bgr);
    scaler_ctx_gen_reset(&vk->readback.scaler_rgb);
