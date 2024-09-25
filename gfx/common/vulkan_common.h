@@ -614,6 +614,8 @@ typedef struct vk
       VkDescriptorSetLayout set_layout;
       VkPipelineLayout layout;
       VkPipelineCache cache;
+      void *cache_data;
+      size_t cache_data_size;
    } pipelines;
 
    struct
