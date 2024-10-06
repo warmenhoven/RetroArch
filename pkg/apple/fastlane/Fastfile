@@ -33,6 +33,7 @@ platform :mac do
     )
     ensure_git_status_clean
     git_pull
+    sh("git checkout -b master --track origin/master")
     sh("git log -1")
     begin
       app_store_build_number(
