@@ -1,6 +1,7 @@
 name: macOS App Store
 on:
   # push:
+  workflow_dispatch:
   schedule:
     - cron: '0 0 * * *'
 jobs:
