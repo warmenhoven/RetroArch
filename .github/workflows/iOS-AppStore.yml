@@ -1,6 +1,7 @@
 name: iOS App Store
 on:
   # push:
+  workflow_dispatch:
   schedule:
     - cron: '0 0 * * *'
 jobs:
@@ -24,6 +25,7 @@ jobs:
         run: |
           gh repo clone warmenhoven/retroarch-apple-deps
           sudo mv retroarch-apple-deps /usr/local/share
+          sudo xcode-select -s '/Applications/Xcode_16.app/Contents/Developer'
       - name: Setup Certs
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
