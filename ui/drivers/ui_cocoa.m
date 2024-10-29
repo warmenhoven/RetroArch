@@ -20,6 +20,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <mach/task.h>
+#include <mach/mach_init.h>
+#include <mach/mach_port.h>
+
 #include <boolean.h>
 #include <file/file_path.h>
 #include <string/stdstring.h>
@@ -1073,6 +1077,8 @@ static void open_document_handler(
 
 int main(int argc, char *argv[])
 {
+   task_set_exception_ports(mach_task_self(), EXC_MASK_BAD_ACCESS, MACH_PORT_NULL, EXCEPTION_DEFAULT, THREAD_STATE_NONE);
+
    if (argc == 2)
    {
        if (argv[1])
