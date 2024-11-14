@@ -6,7 +6,7 @@ on:
     - cron: '0 0 * * *'
 jobs:
   build-and-deploy:
-    runs-on: macos-latest
+    runs-on: macos-15
     env:
       BRANCH_NAME: warmenhoven/dist/appstore
     steps:
@@ -20,8 +20,11 @@ jobs:
         with:
           ref: ${{ env.BRANCH_NAME }}
       - name: Setup Deps
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          sudo xcode-select -s '/Applications/Xcode_16.app/Contents/Developer'
+          gh repo clone warmenhoven/retroarch-apple-deps
+          sudo mv retroarch-apple-deps /usr/local/share
       - name: Setup Certs
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
