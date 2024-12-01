@@ -12,7 +12,7 @@ jobs:
     steps:
       - name: Sync
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
           REPOSITORY: ${{ github.repository }}
         run: gh repo sync $REPOSITORY -b master
       - name: Checkout
@@ -21,7 +21,7 @@ jobs:
           ref: ${{ env.BRANCH_NAME }}
       - name: Setup Deps
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           gh repo clone warmenhoven/retroarch-apple-deps
           sudo mv retroarch-apple-deps /usr/local/share
