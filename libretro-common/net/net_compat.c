@@ -24,6 +24,8 @@
 #include <stdio.h>
 
 #include <compat/strl.h>
+#include <features/features_cpu.h>
+#include <lists/linked_list.h>
 #include <retro_miscellaneous.h>
 #include <retro_timers.h>
 
@@ -264,9 +266,108 @@ static void _net_compat_thread_cleanup(OSThread *thread, void *stack)
 #define SOC_BUFFERSIZE 0x100000
 #endif
 
+static linked_list_t *getaddrinfo_cache;
+
+typedef struct getaddrinfo_cache_entry
+{
+   char *node;
+   char *service;
+   struct addrinfo hints;
+   struct addrinfo res;
+   int rv;
+   retro_time_t timestamp;
+} getaddrinfo_cache_entry;
+
+static void getaddrinfo_cache_entry_free(getaddrinfo_cache_entry *entry)
+{
+   if (!entry)
+      return;
+   if (entry->node)
+      free(entry->node);
+   if (entry->service)
+      free(entry->service);
+   free(entry);
+}
+
+static bool getaddrinfo_cache_expired(void *value)
+{
+   retro_time_t now = cpu_features_get_time_usec();
+   getaddrinfo_cache_entry *entry = (getaddrinfo_cache_entry *)value;
+   bool expired;
+   if (!entry)
+      return true;
+   /* expires after 5 minutes */
+   expired = (now - entry->timestamp > (1000 * 1000 * 60 * 5));
+   if (!expired)
+      return true;
+   getaddrinfo_cache_entry_free(entry);
+   return false;
+}
+
+static bool getaddrinfo_cache_matches(void *item, void *usrptr)
+{
+   getaddrinfo_cache_entry *entry = (getaddrinfo_cache_entry *)item;
+   getaddrinfo_cache_entry *key = (getaddrinfo_cache_entry *)usrptr;
+
+   if (!((entry->node == NULL && key->node == NULL) ||
+         (string_is_equal(entry->node, key->node))))
+      return false;
+
+
+   if (!((entry->service == NULL && key->service == NULL) ||
+         (string_is_equal(entry->service, key->service))))
+      return false;
+
+   return !memcmp(&entry->hints, &key->hints, sizeof(struct addrinfo));
+}
+
+static bool getaddrinfo_cache_lookup(const char *node, const char *service,
+      struct addrinfo *hints, struct addrinfo **res, int *rv)
+{
+   getaddrinfo_cache_entry *entry;
+   getaddrinfo_cache_entry key;
+
+   if (!getaddrinfo_cache)
+      getaddrinfo_cache = linked_list_new();
+
+   linked_list_remove_all_matching(getaddrinfo_cache, getaddrinfo_cache_expired);
+
+   key.node = (char *)node;
+   key.service = (char *)service;
+   if (hints)
+      key.hints = *hints;
+   entry = linked_list_get_first_matching(getaddrinfo_cache, getaddrinfo_cache_matches, &key);
+   if (!entry)
+      return false;
+   if (res)
+      *res = &entry->res;
+   if (rv)
+      *rv = entry->rv;
+   return true;
+}
+
+static void getaddrinfo_cache_store(const char *node, const char *service,
+      struct addrinfo *hints, struct addrinfo **res, int rv)
+{
+   getaddrinfo_cache_entry *entry = (getaddrinfo_cache_entry *)calloc(1, sizeof(*entry));
+   if (node)
+      entry->node = strdup(node);
+   if (service)
+      entry->service = strdup(service);
+   if (hints)
+      memcpy(&entry->hints, hints, sizeof(struct addrinfo));
+   if (res && *res)
+      memcpy(&entry->res, *res, sizeof(struct addrinfo));
+   entry->rv = rv;
+   entry->timestamp = cpu_features_get_time_usec();
+   linked_list_insert(getaddrinfo_cache, 0, entry);
+}
+
 int getaddrinfo_retro(const char *node, const char *service,
       struct addrinfo *hints, struct addrinfo **res)
 {
+   int rv;
+
 #if defined(HAVE_SOCKET_LEGACY) || defined(WIIU)
    struct addrinfo default_hints = {0};
 
@@ -278,6 +379,9 @@ int getaddrinfo_retro(const char *node, const char *service,
    if (!node)
       node = (hints->ai_flags & AI_PASSIVE) ? "0.0.0.0" : "127.0.0.1";
 #endif
+
+   if (getaddrinfo_cache_lookup(node, service, hints, res, &rv))
+      return rv;
 
 #ifdef HAVE_SOCKET_LEGACY
    {
@@ -325,16 +429,20 @@ int getaddrinfo_retro(const char *node, const char *service,
 
       *res = info;
 
+      getaddrinfo_cache_store(node, service, hints, res, 0);
       return 0;
 
 failure:
       free(addr);
       free(info);
 
+      getaddrinfo_cache_store(node, service, hints, res, -1);
       return -1;
    }
 #else
-   return getaddrinfo(node, service, hints, res);
+   rv = getaddrinfo(node, service, hints, res);
+   getaddrinfo_cache_store(node, service, hints, res, rv);
+   return rv;
 #endif
 }
 

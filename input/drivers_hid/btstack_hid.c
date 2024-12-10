@@ -95,8 +95,6 @@ typedef struct linked_item
    void *user_data;          /* <-- pointer to struct base */
 } linked_item_t;
 
-typedef linked_item_t *linked_list_t;
-
 typedef struct data_source
 {
    linked_item_t item;
@@ -456,24 +454,6 @@ extern const hci_cmd_t rfcomm_register_service_with_initial_credits;
 extern const hci_cmd_t rfcomm_unregister_service;
 /* request persistent rfcomm channel for service name: serive name (char*)  */
 extern const hci_cmd_t rfcomm_persistent_channel_for_service;
-
-/* linked_list.h */
-
-void linked_item_set_user(linked_item_t *item, void *user_data);
-
-void * linked_item_get_user(linked_item_t *item);
-
-int  linked_list_empty(linked_list_t * list);
-
-void linked_list_add(linked_list_t * list, linked_item_t *item);
-
-void linked_list_add_tail(linked_list_t * list, linked_item_t *item);
-
-int  linked_list_remove(linked_list_t * list, linked_item_t *item);
-
-linked_item_t * linked_list_get_last_item(linked_list_t * list);
-
-void test_linked_list(void);
 
 /* run_loop.h */
 
