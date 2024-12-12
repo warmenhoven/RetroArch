@@ -35,43 +35,47 @@
 int socket_init(void **address, uint16_t port, const char *server,
       enum socket_type type, int family)
 {
-   char port_buf[6];
-   struct addrinfo hints      = {0};
    struct addrinfo **addrinfo = (struct addrinfo**)address;
    struct addrinfo *addr      = NULL;
 
-   if (!family)
+   if (!*addrinfo)
+   {
+      char port_buf[6];
+      struct addrinfo hints      = {0};
+
+      if (!family)
 #if defined(HAVE_SOCKET_LEGACY) || defined(WIIU)
-      family = AF_INET;
+         family = AF_INET;
 #else
-      family = AF_UNSPEC;
+         family = AF_UNSPEC;
 #endif
 
-   hints.ai_family = family;
+      hints.ai_family = family;
 
-   switch (type)
-   {
-      case SOCKET_TYPE_DATAGRAM:
-         hints.ai_socktype = SOCK_DGRAM;
-         break;
-      case SOCKET_TYPE_STREAM:
-         hints.ai_socktype = SOCK_STREAM;
-         break;
-      default:
+      switch (type)
+      {
+         case SOCKET_TYPE_DATAGRAM:
+            hints.ai_socktype = SOCK_DGRAM;
+            break;
+         case SOCKET_TYPE_STREAM:
+            hints.ai_socktype = SOCK_STREAM;
+            break;
+         default:
+            return -1;
+      }
+
+      if (!server)
+         hints.ai_flags = AI_PASSIVE;
+
+      if (!network_init())
+         return -1;
+
+      snprintf(port_buf, sizeof(port_buf), "%hu", (unsigned short)port);
+      hints.ai_flags |= AI_NUMERICSERV;
+
+      if (getaddrinfo_retro(server, port_buf, &hints, addrinfo))
          return -1;
    }
-
-   if (!server)
-      hints.ai_flags = AI_PASSIVE;
-
-   if (!network_init())
-      return -1;
-
-   snprintf(port_buf, sizeof(port_buf), "%hu", (unsigned short)port);
-   hints.ai_flags |= AI_NUMERICSERV;
-
-   if (getaddrinfo_retro(server, port_buf, &hints, addrinfo))
-      return -1;
 
    addr = *addrinfo;
    if (!addr)
