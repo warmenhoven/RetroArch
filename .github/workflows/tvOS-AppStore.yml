@@ -2,6 +2,17 @@ name: tvOS App Store
 on:
   # push:
   workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to build from'
+        type: string
+        required: true
+        default: 'master'
+      upload:
+        description: 'Upload to TestFlight'
+        type: boolean
+        required: true
+        default: true
   schedule:
     - cron: '0 0 * * *'
 jobs:
@@ -65,7 +76,9 @@ jobs:
           APP_STORE_CONNECT_API_KEY_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_KEY_ID }}
         run: |
           cd pkg/apple
-          fastlane appletvos build branch:master
+          if [ -n "${{ inputs.branch }}" ] ; then BRANCH='${{ inputs.branch }}' ; else BRANCH=master ; fi
+          if [ -n "${{ inputs.upload }}" ] ; then UPLOAD='upload:${{ inputs.upload }}' ; fi
+          fastlane appletvos build branch:$BRANCH $UPLOAD
       - name: Get short SHA
         id: slug
         run: echo "sha8=$(echo ${GITHUB_SHA} | cut -c1-8)" >> $GITHUB_OUTPUT
