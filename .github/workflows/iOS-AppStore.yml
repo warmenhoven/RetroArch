@@ -19,8 +19,6 @@ on:
 jobs:
   build-and-deploy:
     runs-on: macos-15
-    env:
-      BRANCH_NAME: warmenhoven/dist/appstore
     steps:
       - name: Sync
         env:
@@ -30,8 +28,6 @@ jobs:
         run: gh repo sync $REPOSITORY -b master
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: ${{ env.BRANCH_NAME }}
       - name: Setup Deps
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
