@@ -1021,7 +1021,6 @@ if [ "$HAVE_GLSLANG" != no ]; then
       glslang/Public/ShaderLang.h \
       glslang/SPIRV/GlslangToSpv.h
 
-   check_lib cxx GLSLANG -lglslang '' '-lSPIRV'
    check_lib cxx GLSLANG_OSDEPENDENT -lOSDependent
    check_lib cxx GLSLANG_OGLCOMPILER -lOGLCompiler
    check_lib cxx GLSLANG_MACHINEINDEPENDENT -lMachineIndependent
@@ -1030,11 +1029,12 @@ if [ "$HAVE_GLSLANG" != no ]; then
    check_lib cxx GLSLANG_SPIRV -lSPIRV
    check_lib cxx GLSLANG_SPIRV_TOOLS_OPT -lSPIRV-Tools-opt
    check_lib cxx GLSLANG_SPIRV_TOOLS -lSPIRV-Tools
+   check_lib cxx GLSLANG -lglslang '' "$GLSLANG_SPIRV_LIBS"
 
-   # newer glslang carries HLSL, OSDependent, OGLCompiler and
-   # MachineIndependent in libglslang itself: those link when present
+   # newer glslang carries HLSL, OSDependent, OGLCompiler,
+   # MachineIndependent and SPIRV in libglslang itself: those link
+   # when present
    if [ "$HAVE_GLSLANG" = no ] ||
-      [ "$HAVE_GLSLANG_SPIRV" = no ] ||
       [ "$HAVE_GLSLANG_SPIRV_TOOLS_OPT" = no ] ||
       [ "$HAVE_GLSLANG_SPIRV_TOOLS" = no ]; then
       die : 'Notice: System glslang libraries not found, disabling glslang support.'
