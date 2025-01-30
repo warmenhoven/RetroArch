@@ -36,19 +36,6 @@ class HelperBarViewController: UIViewController {
       setupBarItems()
    }
    
-   override func viewDidAppear(_ animated: Bool) {
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-         self?.showIndicatorAndFadeAway()
-      }
-   }
-   
-   override func viewDidLayoutSubviews() {
-      super.viewDidLayoutSubviews()
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-         self?.showIndicatorAndFadeAway()
-      }
-   }
-   
    private func setupViews() {
       indicatorImageView.translatesAutoresizingMaskIntoConstraints = false
       view.addSubview(indicatorImageView)
@@ -63,6 +50,8 @@ class HelperBarViewController: UIViewController {
       navigationBar.trailingAnchor.constraint(equalTo: view.trailingAnchor).isActive = true
       let tap = UITapGestureRecognizer(target: self, action: #selector(didTap(_:)))
       tap.delegate = self
+      tap.numberOfTapsRequired = 2
+      tap.numberOfTouchesRequired = 2
       view.addGestureRecognizer(tap)
       view.isUserInteractionEnabled = true
       let indicatorTap = UITapGestureRecognizer(target: self, action: #selector(didTapIndicator(_:)))
@@ -116,16 +105,12 @@ class HelperBarViewController: UIViewController {
    var tappedIndicator = false
    
    @objc func didTap(_ sender: UITapGestureRecognizer) {
-      let point = sender.location(in: view)
-      guard point.y <= 60 else { return }   // detect top portion of view only
-      if point.x <= 60 {
-         indicatorImageView.layer.removeAllAnimations()
-         indicatorImageView.alpha = 1.0
-         tappedIndicator = false
-         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-            if !(self?.tappedIndicator ?? false) {
-               self?.showIndicatorAndFadeAway()
-            }
+      indicatorImageView.layer.removeAllAnimations()
+      indicatorImageView.alpha = 1.0
+      tappedIndicator = false
+      DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+         if !(self?.tappedIndicator ?? false) {
+            self?.showIndicatorAndFadeAway()
          }
       }
    }
