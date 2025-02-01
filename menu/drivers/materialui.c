@@ -2950,7 +2950,7 @@ static uint8_t materialui_count_lines(const char *str)
 static bool materialui_show_sublabel_for_entry(menu_entry_t *entry)
 {
    settings_t *settings = config_get_ptr();
-   return (settings->bools.menu_show_sublabels && !string_is_empty(entry->sublabel));
+   return ((entry->enum_idx == MENU_ENUM_LABEL_CHEEVOS_LOCKED_ENTRY || settings->bools.menu_show_sublabels) && !string_is_empty(entry->sublabel));
 }
 
 /* > Returns number of lines required to display
