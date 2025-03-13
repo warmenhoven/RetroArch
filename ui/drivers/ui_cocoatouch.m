@@ -51,6 +51,14 @@
 #import <GameController/GCMouse.h>
 #endif
 
+#ifdef HAVE_KSCRASH
+@import KSCrashRecording;
+@import KSCrashFilters;
+@import KSCrashSinks;
+@import KSCrashInstallations;
+@import KSCrashDemangleFilter;  // Only if needed
+#endif
+
 #ifdef HAVE_SDL2
 #define SDL_MAIN_HANDLED
 #include "SDL.h"
@@ -666,6 +674,18 @@ enum
 
 - (void)applicationDidFinishLaunching:(UIApplication *)application
 {
+#ifdef HAVE_KSCRASH
+   KSCrashInstallationStandard *inst = [KSCrashInstallationStandard sharedInstance];
+   inst.url = [NSURL URLWithString:@"https://www.warmenhoven.org/retroarch/crashreport.php"];
+   KSCrashConfiguration *config = [KSCrashConfiguration new];
+   if (jit_available())
+      config.monitors = KSCrashMonitorTypeDebuggerSafe;
+   else
+      config.monitors = KSCrashMonitorTypeProductionSafe;
+   [inst installWithConfiguration:config error:nil];
+   [inst sendAllReportsWithCompletion:nil];
+#endif
+
    char arguments[]   = "retroarch";
    char       *argv[] = {arguments,   NULL};
    int argc           = 1;
