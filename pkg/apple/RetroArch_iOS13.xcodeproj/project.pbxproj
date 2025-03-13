@@ -28,6 +28,14 @@
 		0712A7722B807AE400C9765F /* TVServices.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0712A7712B807AE400C9765F /* TVServices.framework */; };
 		0712A7762B807AE400C9765F /* ContentProvider.m in Sources */ = {isa = PBXBuildFile; fileRef = 0712A7752B807AE400C9765F /* ContentProvider.m */; };
 		0712A77A2B807AE400C9765F /* RetroArchTopShelfExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 0712A7702B807AE400C9765F /* RetroArchTopShelfExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		07247C1A2D7EB25E003D12D7 /* BootTimeMonitor in Frameworks */ = {isa = PBXBuildFile; productRef = 07247C192D7EB25E003D12D7 /* BootTimeMonitor */; };
+		07247C1C2D7EB25E003D12D7 /* DemangleFilter in Frameworks */ = {isa = PBXBuildFile; productRef = 07247C1B2D7EB25E003D12D7 /* DemangleFilter */; };
+		07247C1E2D7EB25E003D12D7 /* DiscSpaceMonitor in Frameworks */ = {isa = PBXBuildFile; productRef = 07247C1D2D7EB25E003D12D7 /* DiscSpaceMonitor */; };
+		07247C202D7EB25E003D12D7 /* Filters in Frameworks */ = {isa = PBXBuildFile; productRef = 07247C1F2D7EB25E003D12D7 /* Filters */; };
+		07247C222D7EB25E003D12D7 /* Installations in Frameworks */ = {isa = PBXBuildFile; productRef = 07247C212D7EB25E003D12D7 /* Installations */; };
+		07247C242D7EB25E003D12D7 /* Recording in Frameworks */ = {isa = PBXBuildFile; productRef = 07247C232D7EB25E003D12D7 /* Recording */; };
+		07247C262D7EB25E003D12D7 /* Reporting in Frameworks */ = {isa = PBXBuildFile; productRef = 07247C252D7EB25E003D12D7 /* Reporting */; };
+		07247C282D7EB25E003D12D7 /* Sinks in Frameworks */ = {isa = PBXBuildFile; productRef = 07247C272D7EB25E003D12D7 /* Sinks */; };
 		073734A42A093A5700BF7397 /* JITSupport.m in Sources */ = {isa = PBXBuildFile; fileRef = 92A1F81727006CAE00DEAD2A /* JITSupport.m */; };
 		0753AD192C86144200874A42 /* BaseConfig.xcconfig in Resources */ = {isa = PBXBuildFile; fileRef = 0753AD182C86144200874A42 /* BaseConfig.xcconfig */; };
 		0753AD1A2C86144200874A42 /* BaseConfig.xcconfig in Resources */ = {isa = PBXBuildFile; fileRef = 0753AD182C86144200874A42 /* BaseConfig.xcconfig */; };
@@ -40,6 +48,14 @@
 		07B7872D29E8FE8F0088B74F /* filters in Resources */ = {isa = PBXBuildFile; fileRef = 07B7872C29E8FE8F0088B74F /* filters */; };
 		07C5C6402CD167470030FBEC /* GCDWebDAVServer.m in Sources */ = {isa = PBXBuildFile; fileRef = 07C5C63E2CD167470030FBEC /* GCDWebDAVServer.m */; };
 		07F7FB022A2DA8B800037C04 /* filters in Resources */ = {isa = PBXBuildFile; fileRef = 07F7FB012A2DA8B800037C04 /* filters */; };
+		07FAE9D02D828F8800FF7891 /* BootTimeMonitor in Frameworks */ = {isa = PBXBuildFile; productRef = 07FAE9CF2D828F8800FF7891 /* BootTimeMonitor */; };
+		07FAE9D22D828F8800FF7891 /* DemangleFilter in Frameworks */ = {isa = PBXBuildFile; productRef = 07FAE9D12D828F8800FF7891 /* DemangleFilter */; };
+		07FAE9D42D828F8800FF7891 /* DiscSpaceMonitor in Frameworks */ = {isa = PBXBuildFile; productRef = 07FAE9D32D828F8800FF7891 /* DiscSpaceMonitor */; };
+		07FAE9D62D828F8800FF7891 /* Filters in Frameworks */ = {isa = PBXBuildFile; productRef = 07FAE9D52D828F8800FF7891 /* Filters */; };
+		07FAE9D82D828F8800FF7891 /* Installations in Frameworks */ = {isa = PBXBuildFile; productRef = 07FAE9D72D828F8800FF7891 /* Installations */; };
+		07FAE9DA2D828F8800FF7891 /* Recording in Frameworks */ = {isa = PBXBuildFile; productRef = 07FAE9D92D828F8800FF7891 /* Recording */; };
+		07FAE9DC2D828F8800FF7891 /* Reporting in Frameworks */ = {isa = PBXBuildFile; productRef = 07FAE9DB2D828F8800FF7891 /* Reporting */; };
+		07FAE9DE2D828F8800FF7891 /* Sinks in Frameworks */ = {isa = PBXBuildFile; productRef = 07FAE9DD2D828F8800FF7891 /* Sinks */; };
 		9204BE0D1D319EF300BD49DB /* griffin_objc.m in Sources */ = {isa = PBXBuildFile; fileRef = 50521A431AA23BF500185CC9 /* griffin_objc.m */; };
 		9204BE101D319EF300BD49DB /* griffin.c in Sources */ = {isa = PBXBuildFile; fileRef = 501232C9192E5FC40063A359 /* griffin.c */; settings = {COMPILER_FLAGS = "-include $(DERIVED_FILE_DIR)/git_version.h"; }; };
 		9204BE121D319EF300BD49DB /* libz.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 5040F04F1AE47ED4006F6972 /* libz.dylib */; };
@@ -497,6 +513,7 @@
 				9210C2F224B3A19100E6FE7C /* MetalKit.framework in Frameworks */,
 				9210C2F324B3A19100E6FE7C /* Metal.framework in Frameworks */,
 				07912FC22E22B3FF004AA331 /* AppIntents.framework in Frameworks */,
+				07FAE9D82D828F8800FF7891 /* Installations in Frameworks */,
 				92CC05C721FEDD0B00FF79F0 /* MobileCoreServices.framework in Frameworks */,
 				92CC05C521FEDC9F00FF79F0 /* CFNetwork.framework in Frameworks */,
 				9204BE121D319EF300BD49DB /* libz.dylib in Frameworks */,
@@ -505,9 +522,15 @@
 				9204BE141D319EF300BD49DB /* GameController.framework in Frameworks */,
 				9204BE151D319EF300BD49DB /* CoreText.framework in Frameworks */,
 				9204BE161D319EF300BD49DB /* CoreLocation.framework in Frameworks */,
+				07FAE9DE2D828F8800FF7891 /* Sinks in Frameworks */,
+				07FAE9DC2D828F8800FF7891 /* Reporting in Frameworks */,
 				9204BE171D319EF300BD49DB /* CoreMedia.framework in Frameworks */,
 				9204BE181D319EF300BD49DB /* AVFoundation.framework in Frameworks */,
+				07FAE9D62D828F8800FF7891 /* Filters in Frameworks */,
+				07FAE9D02D828F8800FF7891 /* BootTimeMonitor in Frameworks */,
 				9204BE191D319EF300BD49DB /* CoreVideo.framework in Frameworks */,
+				07FAE9D22D828F8800FF7891 /* DemangleFilter in Frameworks */,
+				07FAE9DA2D828F8800FF7891 /* Recording in Frameworks */,
 				070A88432A4E7AA9003161C0 /* OpenAL.framework in Frameworks */,
 				9204BE1A1D319EF300BD49DB /* AudioToolbox.framework in Frameworks */,
 				9204BE1B1D319EF300BD49DB /* CoreAudio.framework in Frameworks */,
@@ -516,6 +539,7 @@
 				9204BE1E1D319EF300BD49DB /* CoreGraphics.framework in Frameworks */,
 				9204BE1F1D319EF300BD49DB /* GLKit.framework in Frameworks */,
 				9204BE201D319EF300BD49DB /* OpenGLES.framework in Frameworks */,
+				07FAE9D42D828F8800FF7891 /* DiscSpaceMonitor in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -523,9 +547,17 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				07247C282D7EB25E003D12D7 /* Sinks in Frameworks */,
 				076CA50D2B695C2C00840EA5 /* libz.tbd in Frameworks */,
+				07247C1C2D7EB25E003D12D7 /* DemangleFilter in Frameworks */,
+				07247C222D7EB25E003D12D7 /* Installations in Frameworks */,
+				07247C262D7EB25E003D12D7 /* Reporting in Frameworks */,
 				926C77F121FD26E800103EDE /* GameController.framework in Frameworks */,
+				07247C1A2D7EB25E003D12D7 /* BootTimeMonitor in Frameworks */,
+				07247C202D7EB25E003D12D7 /* Filters in Frameworks */,
 				926C77EF21FD263800103EDE /* AudioToolbox.framework in Frameworks */,
+				07247C1E2D7EB25E003D12D7 /* DiscSpaceMonitor in Frameworks */,
+				07247C242D7EB25E003D12D7 /* Recording in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1347,6 +1379,14 @@
 			);
 			name = RetroArchiOS;
 			packageProductDependencies = (
+				07FAE9CF2D828F8800FF7891 /* BootTimeMonitor */,
+				07FAE9D12D828F8800FF7891 /* DemangleFilter */,
+				07FAE9D32D828F8800FF7891 /* DiscSpaceMonitor */,
+				07FAE9D52D828F8800FF7891 /* Filters */,
+				07FAE9D72D828F8800FF7891 /* Installations */,
+				07FAE9D92D828F8800FF7891 /* Recording */,
+				07FAE9DB2D828F8800FF7891 /* Reporting */,
+				07FAE9DD2D828F8800FF7891 /* Sinks */,
 			);
 			productName = RetroArch;
 			productReference = 9204BE2B1D319EF300BD49DB /* RetroArch.app */;
@@ -1370,6 +1410,14 @@
 			);
 			name = RetroArchTV;
 			packageProductDependencies = (
+				07247C192D7EB25E003D12D7 /* BootTimeMonitor */,
+				07247C1B2D7EB25E003D12D7 /* DemangleFilter */,
+				07247C1D2D7EB25E003D12D7 /* DiscSpaceMonitor */,
+				07247C1F2D7EB25E003D12D7 /* Filters */,
+				07247C212D7EB25E003D12D7 /* Installations */,
+				07247C232D7EB25E003D12D7 /* Recording */,
+				07247C252D7EB25E003D12D7 /* Reporting */,
+				07247C272D7EB25E003D12D7 /* Sinks */,
 			);
 			productName = RetroArchTV;
 			productReference = 926C77D721FD1E6500103EDE /* RetroArchTV.app */;
@@ -1430,6 +1478,7 @@
 			);
 			mainGroup = 96AFAE1A16C1D4EA009DE44C;
 			packageReferences = (
+				07247C182D7EAC68003D12D7 /* XCRemoteSwiftPackageReference "KSCrash" */,
 			);
 			productRefGroup = 96AFAE2616C1D4EA009DE44C /* Products */;
 			projectDirPath = "";
@@ -2088,6 +2137,100 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		07247C182D7EAC68003D12D7 /* XCRemoteSwiftPackageReference "KSCrash" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/kstenerud/KSCrash";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		07247C192D7EB25E003D12D7 /* BootTimeMonitor */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 07247C182D7EAC68003D12D7 /* XCRemoteSwiftPackageReference "KSCrash" */;
+			productName = BootTimeMonitor;
+		};
+		07247C1B2D7EB25E003D12D7 /* DemangleFilter */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 07247C182D7EAC68003D12D7 /* XCRemoteSwiftPackageReference "KSCrash" */;
+			productName = DemangleFilter;
+		};
+		07247C1D2D7EB25E003D12D7 /* DiscSpaceMonitor */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 07247C182D7EAC68003D12D7 /* XCRemoteSwiftPackageReference "KSCrash" */;
+			productName = DiscSpaceMonitor;
+		};
+		07247C1F2D7EB25E003D12D7 /* Filters */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 07247C182D7EAC68003D12D7 /* XCRemoteSwiftPackageReference "KSCrash" */;
+			productName = Filters;
+		};
+		07247C212D7EB25E003D12D7 /* Installations */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 07247C182D7EAC68003D12D7 /* XCRemoteSwiftPackageReference "KSCrash" */;
+			productName = Installations;
+		};
+		07247C232D7EB25E003D12D7 /* Recording */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 07247C182D7EAC68003D12D7 /* XCRemoteSwiftPackageReference "KSCrash" */;
+			productName = Recording;
+		};
+		07247C252D7EB25E003D12D7 /* Reporting */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 07247C182D7EAC68003D12D7 /* XCRemoteSwiftPackageReference "KSCrash" */;
+			productName = Reporting;
+		};
+		07247C272D7EB25E003D12D7 /* Sinks */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 07247C182D7EAC68003D12D7 /* XCRemoteSwiftPackageReference "KSCrash" */;
+			productName = Sinks;
+		};
+		07FAE9CF2D828F8800FF7891 /* BootTimeMonitor */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 07247C182D7EAC68003D12D7 /* XCRemoteSwiftPackageReference "KSCrash" */;
+			productName = BootTimeMonitor;
+		};
+		07FAE9D12D828F8800FF7891 /* DemangleFilter */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 07247C182D7EAC68003D12D7 /* XCRemoteSwiftPackageReference "KSCrash" */;
+			productName = DemangleFilter;
+		};
+		07FAE9D32D828F8800FF7891 /* DiscSpaceMonitor */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 07247C182D7EAC68003D12D7 /* XCRemoteSwiftPackageReference "KSCrash" */;
+			productName = DiscSpaceMonitor;
+		};
+		07FAE9D52D828F8800FF7891 /* Filters */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 07247C182D7EAC68003D12D7 /* XCRemoteSwiftPackageReference "KSCrash" */;
+			productName = Filters;
+		};
+		07FAE9D72D828F8800FF7891 /* Installations */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 07247C182D7EAC68003D12D7 /* XCRemoteSwiftPackageReference "KSCrash" */;
+			productName = Installations;
+		};
+		07FAE9D92D828F8800FF7891 /* Recording */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 07247C182D7EAC68003D12D7 /* XCRemoteSwiftPackageReference "KSCrash" */;
+			productName = Recording;
+		};
+		07FAE9DB2D828F8800FF7891 /* Reporting */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 07247C182D7EAC68003D12D7 /* XCRemoteSwiftPackageReference "KSCrash" */;
+			productName = Reporting;
+		};
+		07FAE9DD2D828F8800FF7891 /* Sinks */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 07247C182D7EAC68003D12D7 /* XCRemoteSwiftPackageReference "KSCrash" */;
+			productName = Sinks;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 96AFAE1C16C1D4EA009DE44C /* Project object */;
 }
