@@ -1934,6 +1934,26 @@ static unsigned menu_displaylist_parse_system_info(file_list_t *list)
          count++;
    }
 #endif
+#ifdef __APPLE__
+   {
+      CFBundleRef mainBundle = CFBundleGetMainBundle();
+      if (mainBundle)
+      {
+         CFStringRef bundleIdentifier = CFBundleGetIdentifier(mainBundle);
+         if (bundleIdentifier)
+         {
+            size_t _len    = strlcpy(entry, "Bundle Identifier: ", sizeof(entry));
+            Boolean result = CFStringGetCString(bundleIdentifier, entry + _len, sizeof(entry) - _len, kCFStringEncodingUTF8);
+            if (result) {
+               if (menu_entries_append(list, entry, "",
+                           MENU_ENUM_LABEL_SYSTEM_INFO_ENTRY, MENU_SETTINGS_CORE_INFO_NONE,
+                           0, 0, NULL))
+                  count++;
+            }
+         }
+      }
+   }
+#endif
 
    /* Input devices */
    {
