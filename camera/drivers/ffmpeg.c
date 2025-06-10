@@ -102,6 +102,9 @@ static int ffmpeg_camera_get_initial_options(
       snprintf(dimensions, sizeof(dimensions), "%ux%u", width, height);
 
       result = av_dict_set(options, "video_size", dimensions, 0);
+#ifdef __APPLE__
+      result = av_dict_set(options, "framerate", "30", 0);
+#endif
 
       if (result < 0)
       {
@@ -143,7 +146,7 @@ static void ffmpeg_camera_get_source_url(ffmpeg_camera_t *ffmpeg, const AVDevice
    if (string_is_equal(ffmpeg->input_format->name, "avfoundation"))
    {
       /* we only want video, not audio */
-      snprintf(ffmpeg->url, sizeof(ffmpeg->url), "%s:none", device->device_description);
+      snprintf(ffmpeg->url, sizeof(ffmpeg->url), "default:none");
       return;
    }
 #endif
@@ -264,6 +267,7 @@ static void *ffmpeg_camera_init(const char *device, uint64_t caps, unsigned widt
       goto error;
    }
 
+#ifndef __APPLE__
    if (num_sources < 0)
    {
       char msg[AV_ERROR_MAX_STRING_SIZE];
@@ -271,8 +275,9 @@ static void *ffmpeg_camera_init(const char *device, uint64_t caps, unsigned widt
       RARCH_ERR("[FFMPEG] Failed to list video input sources: %s.\n", msg);
       goto error;
    }
+#endif
 
-   ffmpeg_camera_get_source_url(ffmpeg, device_list->devices[0]);
+   ffmpeg_camera_get_source_url(ffmpeg, device_list ? device_list->devices[0] : NULL);
    RARCH_LOG("[FFMPEG] Using video input device: %s (%s, flags=0x%x).\n", ffmpeg->input_format->name, ffmpeg->input_format->long_name, ffmpeg->input_format->flags);
 
    avdevice_free_list_devices(&device_list);
