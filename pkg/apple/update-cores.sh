@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 DEBUG=
 
@@ -68,6 +68,90 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
+
+GITLAB_BASE="https://git.libretro.com"
+
+function gitlab_job_names() {
+    case "$PLATFORM" in
+        ios)  echo "libretro-build-ios-arm64" ;;
+        tvos) echo "libretro-build-tvos-arm64" ;;
+        osx)  echo "libretro-build-osx-arm64 libretro-build-osx-x64" ;;
+    esac
+}
+
+# Try downloading a dylib from GitLab CI artifacts.
+# Called from within update_dylib's subshell when buildbot fails.
+# Args: corename target_dylib
+function _try_gitlab() {
+    local corename=$1
+    local target_dylib=$2
+    local project_url="$GITLAB_BASE/api/v4/projects/warmenhoven%2F${corename}"
+
+    printf "Trying GitLab artifacts for ${YELLOW}$corename${NC}...\n"
+
+    local default_branch
+    default_branch=$(curl $CURL_DEBUG "$project_url" | sed -n 's/.*"default_branch":"\([^"]*\)".*/\1/p')
+    if [ -z "$default_branch" ] ; then
+        printf "${RED}Could not find GitLab project for ${corename}${NC}\n"
+        return 1
+    fi
+    debug "default_branch for $corename is $default_branch"
+
+    local jobs
+    jobs=( $(gitlab_job_names) )
+
+    local tmpdir="${corename}_gitlab.tmp"
+    mkdir "$tmpdir"
+    pushd "$tmpdir" >/dev/null
+    local dylib=
+    for job in "${jobs[@]}" ; do
+        debug curl $CURL_DEBUG -o artifacts.zip "$project_url/jobs/artifacts/${default_branch}/download?job=${job}"
+        curl $CURL_DEBUG -o artifacts.zip "$project_url/jobs/artifacts/${default_branch}/download?job=${job}"
+        if [ ! -f artifacts.zip ] ; then
+            printf "${RED}Download ${corename} artifact for ${job} failed${NC}\n"
+            break
+        fi
+
+        unzip $UNZIP_DEBUG artifacts.zip -x '*.dSYM*'
+        rm -f artifacts.zip
+
+        # Find the dylib that was extracted
+        local found
+        found=$(ls *_libretro*.dylib 2>/dev/null | head -1)
+        if [ -z "$found" ] ; then
+            printf "${RED}No dylib found in ${corename} artifact for ${job}${NC}\n"
+            break
+        fi
+
+        if [ -z "$dylib" ] ; then
+            dylib="$found"
+        fi
+
+        # macOS needs universal binaries from multiple jobs
+        if [ "${#jobs[@]}" != 1 ] ; then
+            mv "$found" "$found.$job"
+        fi
+    done
+
+    if [ -n "$dylib" ] && [ "${#jobs[@]}" != 1 ] ; then
+        lipo -create -output "$dylib" "$dylib".*
+    fi
+
+    popd >/dev/null
+    if [ -n "$dylib" ] && [ -f "$tmpdir/$dylib" ] ; then
+        printf "${GREEN}GitLab download ${corename} (${dylib}) success!${NC}\n"
+        # Rename to target dylib name if CI produced a different name
+        if [ "$dylib" != "$target_dylib" ] ; then
+            mv "$tmpdir/$dylib" "$target_dylib"
+        else
+            mv "$tmpdir/$dylib" "$dylib"
+        fi
+        rm -rf "$tmpdir"
+        return 0
+    fi
+    rm -rf "$tmpdir"
+    return 1
+}
 
 function update_dylib() {
     dylib=$1
@@ -141,6 +225,9 @@ function update_dylib() {
                 rm -rf "$dylib".dSYM
                 mv "$dylib".tmp/"$dylib".dSYM "$dylib".dSYM
             fi
+        else
+            # Buildbot failed, try GitLab artifacts
+            _try_gitlab "${dylib%%_libretro*}" "$dylib"
         fi
         rm -rf "$dylib".tmp
     ) &
@@ -167,7 +254,12 @@ function find_dylib() {
     elif [[ "${allcores[*]}" =~ "${1}" ]] ; then
         add_dylib "${1}"
     else
-        echo "Don't know how to handle '$1'."
+        # Not on buildbot; update_dylib will try GitLab as fallback
+        if [ "$PLATFORM" = "osx" ] ; then
+            add_dylib "${1}_libretro.dylib"
+        else
+            add_dylib "${1}_libretro_${PLATFORM}.dylib"
+        fi
     fi
 }
 
@@ -325,6 +417,22 @@ else
             for dylib in "${exports[@]}" ; do
                 find_dylib $dylib
             done
+        elif [ "$1" = "nonstore" ] ; then
+            for f in "${allcores[@]}"; do
+                base=${f%%_libretro*.dylib}
+                if ! printf '%s\n' "${appstore_cores[@]}" | grep -Fxq "$base"; then
+                    printf '%s\n' "$base"
+                fi
+            done
+            exit
+        elif [ "$1" = "mine" ] ; then
+            for f in *_libretro*.dylib ; do
+                base=${f%%_libretro*.dylib}
+                if ! printf '%s\n' "${appstore_cores[@]}" | grep -Fxq "$base"; then
+                    printf '%s\n' "$base"
+                fi
+            done
+            exit
         else
             find_dylib "$1"
         fi
