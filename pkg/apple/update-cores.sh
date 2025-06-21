@@ -213,6 +213,7 @@ appstore_cores=(
     px68k
     quicknes
     race
+    reminiscence
     sameboy
     sameduck
     scummvm
@@ -241,6 +242,10 @@ appstore_cores=(
     vice_xvic
     vircon32
     virtualxt
+    vitaquake2
+    vitaquake2-rogue
+    vitaquake2-xatrix
+    vitaquake2-zaero
     wasm4
     xrick
     yabause
