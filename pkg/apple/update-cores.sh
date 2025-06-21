@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 DEBUG=
 
@@ -322,6 +322,22 @@ else
             for dylib in "${exports[@]}" ; do
                 find_dylib $dylib
             done
+        elif [ "$1" = "nonstore" ] ; then
+            for f in "${allcores[@]}"; do
+                base=${f%%_libretro*.dylib}
+                if ! printf '%s\n' "${appstore_cores[@]}" | grep -Fxq "$base"; then
+                    printf '%s\n' "$base"
+                fi
+            done
+            exit
+        elif [ "$1" = "mine" ] ; then
+            for f in *_libretro*.dylib ; do
+                base=${f%%_libretro*.dylib}
+                if ! printf '%s\n' "${appstore_cores[@]}" | grep -Fxq "$base"; then
+                    printf '%s\n' "$base"
+                fi
+            done
+            exit
         else
             find_dylib "$1"
         fi
