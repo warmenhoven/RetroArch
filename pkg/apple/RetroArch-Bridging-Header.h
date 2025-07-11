@@ -22,3 +22,7 @@
 #import "../ui/drivers/cocoa/cocoa_common.h"
 #include "../../input/drivers_keyboard/keyboard_event_apple.h"
 #include "../../input/input_keymaps.h"
+
+// Playlist utilities (shared between iOS and tvOS)
+#import "../../ui/drivers/cocoa/RetroArchPlaylistManager.h"
+#import "../ui/drivers/cocoa/apple_platform.h"

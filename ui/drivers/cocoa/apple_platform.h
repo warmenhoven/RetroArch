@@ -101,6 +101,10 @@ UINavigationControllerDelegate> {
 - (void)showGameView;
 - (void)supportOtherAudioSessions;
 
+// App Intents support (iOS only)
+- (BOOL)openRetroArchURL:(NSURL *)url;
+- (BOOL)launchGameByFilename:(NSString *)filename;
+
 @end
 
 #else
