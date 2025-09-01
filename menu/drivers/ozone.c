@@ -10314,7 +10314,13 @@ static void ozone_render(void *data,
                - ozone->dimensions.footer_height
                - ozone->dimensions.entry_padding_vertical * 2;
 
-         ozone->animations.scroll_y += ozone->pointer.y_accel;
+         {
+            gfx_animation_t *p_anim = anim_get_ptr();
+            /* Apply scroll acceleration with delta time correction */
+            float frame_rate_factor = (p_anim->delta_time > 0.0f) 
+               ? (p_anim->delta_time / 16.666667f) : 1.0f;
+            ozone->animations.scroll_y += ozone->pointer.y_accel * frame_rate_factor;
+         }
 
          if (ozone->animations.scroll_y + ozone->entries_height < entry_bottom_boundary)
             ozone->animations.scroll_y = entry_bottom_boundary - ozone->entries_height;
@@ -10333,7 +10339,13 @@ static void ozone_render(void *data,
                ozone->dimensions.sidebar_padding_vertical;
          float sidebar_height          = ozone_get_sidebar_height(ozone);
 
-         ozone->animations.scroll_y_sidebar += ozone->pointer.y_accel;
+         {
+            gfx_animation_t *p_anim = anim_get_ptr();
+            /* Apply sidebar scroll acceleration with delta time correction */
+            float frame_rate_factor = (p_anim->delta_time > 0.0f) 
+               ? (p_anim->delta_time / 16.666667f) : 1.0f;
+            ozone->animations.scroll_y_sidebar += ozone->pointer.y_accel * frame_rate_factor;
+         }
 
          if (ozone->animations.scroll_y_sidebar + sidebar_height < sidebar_bottom_boundary)
             ozone->animations.scroll_y_sidebar = sidebar_bottom_boundary - sidebar_height;

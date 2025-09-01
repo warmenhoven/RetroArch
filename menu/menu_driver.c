@@ -6236,9 +6236,17 @@ static int menu_input_post_iterate(
 
    /* Adjust acceleration
     * > If acceleration has not been set on this frame,
-    *   apply normal attenuation */
+    *   apply normal attenuation with frame rate correction */
    if (attenuate_y_accel)
-      menu_input->pointer.y_accel *= MENU_INPUT_Y_ACCEL_DECAY_FACTOR;
+   {
+      gfx_animation_t *p_anim = anim_get_ptr();
+      /* Apply decay factor based on time rather than frames.
+       * At 60Hz, delta_time ≈ 16.67ms, so we normalize to 60Hz reference.
+       * This maintains the same decay rate regardless of refresh rate. */
+      float frame_rate_factor = (p_anim->delta_time > 0.0f) 
+         ? (p_anim->delta_time / 16.666667f) : 1.0f;
+      menu_input->pointer.y_accel *= powf(MENU_INPUT_Y_ACCEL_DECAY_FACTOR, frame_rate_factor);
+   }
 
    /* If select has been released, disable any existing
     * select inhibit */
