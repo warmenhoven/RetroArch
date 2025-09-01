@@ -3998,9 +3998,16 @@ static void materialui_render(void *data,
       }
       /* If fullscreen thumbnail view is enabled,
        * scrolling is disabled - otherwise, just apply
-       * normal pointer acceleration */
+       * normal pointer acceleration with frame rate correction */
       else if (!(mui->flags & MUI_FLAG_SHOW_FULLSCREEN_THUMBNAILS))
-         mui->scroll_y -= mui->pointer.y_accel;
+      {
+         gfx_animation_t *p_anim = anim_get_ptr();
+         /* Apply scroll acceleration with delta time correction.
+          * At 60Hz, delta_time ≈ 16.67ms, so we normalize to 60Hz reference */
+         float frame_rate_factor = (p_anim->delta_time > 0.0f) 
+            ? (p_anim->delta_time / 16.666667f) : 1.0f;
+         mui->scroll_y -= mui->pointer.y_accel * frame_rate_factor;
+      }
    }
 
    if (mui->scroll_y < 0.0f)
