@@ -551,6 +551,40 @@ static bool cocoa_gl_gfx_ctx_set_resize(void *data, unsigned width, unsigned hei
 }
 #endif
 
+static void cocoa_gl_gfx_ctx_get_video_output_size(void *data,
+      unsigned *width, unsigned *height, char *desc, size_t desc_len)
+{
+   cocoa_ctx_data_t *cocoa_ctx = (cocoa_ctx_data_t*)data;
+
+   if (!cocoa_ctx)
+      return;
+
+   *width  = cocoa_ctx->width;
+   *height = cocoa_ctx->height;
+
+#if TARGET_OS_IPHONE
+   if (desc && desc_len > 0)
+   {
+      float scale = cocoa_screen_get_native_scale();
+      if (scale >= 3.0f)
+         strlcpy(desc, "Super Retina", desc_len);
+      else if (scale >= 2.0f)
+         strlcpy(desc, "Retina", desc_len);
+      else
+         strlcpy(desc, "Standard", desc_len);
+   }
+#else
+   if (desc && desc_len > 0)
+   {
+      float scale = cocoa_screen_get_backing_scale_factor();
+      if (scale >= 2.0f)
+         strlcpy(desc, "Retina", desc_len);
+      else
+         strlcpy(desc, "Standard", desc_len);
+   }
+#endif
+}
+
 const gfx_ctx_driver_t gfx_ctx_cocoagl = {
    cocoa_gl_gfx_ctx_init,
    cocoa_gl_gfx_ctx_destroy,
@@ -564,7 +598,7 @@ const gfx_ctx_driver_t gfx_ctx_cocoagl = {
    cocoa_gl_gfx_ctx_get_video_size,
 #endif
    cocoa_gl_gfx_ctx_get_refresh_rate,
-   NULL, /* get_video_output_size */
+   cocoa_gl_gfx_ctx_get_video_output_size,
    NULL, /* get_video_output_prev */
    NULL, /* get_video_output_next */
    cocoa_get_metrics,
