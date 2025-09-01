@@ -2531,6 +2531,39 @@ static uint32_t metal_get_flags(void *data)
    return flags;
 }
 
+static void metal_get_video_output_size(void *data,
+      unsigned *width, unsigned *height, char *desc, size_t desc_len)
+{
+   MetalDriver *md = (__bridge MetalDriver *)data;
+   if (!md || !md.viewport)
+      return;
+
+   *width  = md.viewport->full_width;
+   *height = md.viewport->full_height;
+
+#if TARGET_OS_IPHONE
+   if (desc && desc_len > 0)
+   {
+      float scale = cocoa_screen_get_native_scale();
+      if (scale >= 3.0f)
+         strlcpy(desc, "Super Retina", desc_len);
+      else if (scale >= 2.0f)
+         strlcpy(desc, "Retina", desc_len);
+      else
+         strlcpy(desc, "Standard", desc_len);
+   }
+#else
+   if (desc && desc_len > 0)
+   {
+      float scale = cocoa_screen_get_backing_scale_factor();
+      if (scale >= 2.0f)
+         strlcpy(desc, "Retina", desc_len);
+      else
+         strlcpy(desc, "Standard", desc_len);
+   }
+#endif
+}
+
 static const video_poke_interface_t metal_poke_interface = {
    metal_get_flags,
    metal_load_texture,
@@ -2538,7 +2571,7 @@ static const video_poke_interface_t metal_poke_interface = {
    metal_set_video_mode,
    metal_get_refresh_rate,
    metal_set_filtering,
-   NULL, /* get_video_output_size */
+   metal_get_video_output_size,
    NULL, /* get_video_output_prev */
    NULL, /* get_video_output_next */
    NULL, /* get_current_framebuffer */
