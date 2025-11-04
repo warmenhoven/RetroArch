@@ -87,7 +87,7 @@ static CocoaView* g_instance;
 void *glkitview_init(void);
 void cocoa_file_load_with_detect_core(const char *filename);
 
-@interface CocoaView()<GCDWebUploaderDelegate, UIGestureRecognizerDelegate
+@interface CocoaView()<GCDWebUploaderDelegate, GCDWebDAVServerDelegate, UIGestureRecognizerDelegate
 #if TARGET_OS_IOS
 ,UIDocumentPickerDelegate
 #endif
@@ -758,6 +758,7 @@ void rarch_stop_draw_observer(void)
 #if !TARGET_OS_SIMULATOR
     [[WebServer sharedInstance] startServers];
     [WebServer sharedInstance].webUploader.delegate = self;
+    [WebServer sharedInstance].webDAVServer.delegate = self;
 #endif
 }
 
@@ -794,6 +795,7 @@ void rarch_stop_draw_observer(void)
 #if TARGET_OS_IOS
         [alert addAction:[UIAlertAction actionWithTitle:@"Stop Server" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
             [[WebServer sharedInstance] webUploader].delegate = nil;
+            [[WebServer sharedInstance] webDAVServer].delegate = nil;
             [[WebServer sharedInstance] stopServers];
            struct menu_state *menu_st = menu_state_get_ptr();
            menu_st->flags &= ~MENU_ST_FLAG_BLOCK_ALL_INPUT;;
@@ -805,6 +807,18 @@ void rarch_stop_draw_observer(void)
         }];
     });
 #endif
+}
+
+#pragma mark GCDWebDAVServerDelegate
+- (void)davServer:(GCDWebDAVServer*)server didUploadFileAtPath:(NSString*)path
+{
+    /* Delete AppleDouble files created by macOS */
+    NSString *filename = [path lastPathComponent];
+    if ([filename hasPrefix:@"._"])
+    {
+        NSError *error = nil;
+        [[NSFileManager defaultManager] removeItemAtPath:path error:&error];
+    }
 }
 
 #endif
