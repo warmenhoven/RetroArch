@@ -28,6 +28,7 @@
 #include <formats/m3u_file.h>
 #include <encodings/crc32.h>
 #include <streams/interface_stream.h>
+#include <formats/m3u_file.h>
 #include "tasks_internal.h"
 
 #include "../core_info.h"
@@ -158,6 +159,7 @@ typedef struct database_state_handle
 {
    database_info_list_t *info;
    struct string_list *list;
+   struct string_list *m3u_list;  /* List of M3U files found during scan */
    uint8_t *buf;
    size_t list_index;
    size_t entry_index;
@@ -375,6 +377,208 @@ static void task_database_cue_prune(database_info_handle_t *db,
 
    intfstream_close(fd);
    free(fd);
+}
+
+/* Remove disc indicators from title string */
+static void remove_disc_indicators(char *title, size_t len)
+{
+   char *disc_pos = NULL;
+
+   /* Search for common disc patterns */
+   if ((disc_pos = strstr(title, " (Disc ")) ||
+       (disc_pos = strstr(title, " (disc ")) ||
+       (disc_pos = strstr(title, " (Disk ")) ||
+       (disc_pos = strstr(title, " (disk ")))
+   {
+      /* Find the closing parenthesis */
+      char *end_pos = strchr(disc_pos, ')');
+      if (end_pos)
+      {
+         /* Check if this looks like a disc indicator */
+         /* Pattern: " (Disc X)" where X is number or letter */
+         size_t pattern_len = disc_pos - title + 7; /* " (Disc " */
+         if (pattern_len + 2 <= len) /* has room for "X)" */
+         {
+            char disc_char = disc_pos[7]; /* character after " (Disc " */
+            /* If it's a number 0-9 or letter a-z/A-Z */
+            if (isdigit((unsigned char)disc_char) ||
+                isalpha((unsigned char)disc_char))
+            {
+               /* Truncate at the disc indicator */
+               *disc_pos = '\0';
+               /* Remove trailing whitespace */
+               string_trim_whitespace_right(title);
+            }
+         }
+      }
+   }
+}
+
+static void task_database_m3u_prune(database_info_handle_t *db,
+      const char *m3u_path)
+{
+   size_t i, j;
+   m3u_file_t *m3u_file = m3u_file_init(m3u_path);
+
+   if (!m3u_file)
+      return;
+
+   /* Loop over M3U entries */
+   for (i = 0; i < m3u_file_get_size(m3u_file); i++)
+   {
+      m3u_file_entry_t *entry = NULL;
+
+      if (!m3u_file_get_entry(m3u_file, i, &entry))
+         continue;
+
+      if (string_is_empty(entry->full_path))
+         continue;
+
+      /* Find and prune this file from scan list */
+      for (j = db->list_ptr; j < db->list->size; j++)
+      {
+         if (db->list->elems[j].data &&
+             string_is_equal(entry->full_path, db->list->elems[j].data))
+         {
+            RARCH_DBG("[Scanner] Pruning file referenced by M3U: %s\n",
+                      entry->full_path);
+            free(db->list->elems[j].data);
+            db->list->elems[j].data = NULL;
+         }
+      }
+   }
+
+   m3u_file_free(m3u_file);
+}
+
+static void task_database_iterate_m3u(
+      db_handle_t *_db,
+      database_state_handle_t *db_state,
+      const char *m3u_path)
+{
+   size_t i, j;
+   bool found_match = false;
+   char first_matched_db[NAME_MAX_LENGTH];
+   char first_matched_crc[128];
+   char collapsed_title[NAME_MAX_LENGTH];
+   m3u_file_t *m3u_file = NULL;
+
+   first_matched_db[0] = '\0';
+   first_matched_crc[0] = '\0';
+   collapsed_title[0] = '\0';
+
+   /* Open M3U file */
+   if (!(m3u_file = m3u_file_init(m3u_path)))
+   {
+      RARCH_ERR("[Scanner] Failed to open M3U file: %s\n", m3u_path);
+      return;
+   }
+
+   /* Scan each referenced file and check if it's in scan_results */
+   for (i = 0; i < m3u_file_get_size(m3u_file); i++)
+   {
+      m3u_file_entry_t *entry = NULL;
+      const char *ref_path = NULL;
+
+      if (!m3u_file_get_entry(m3u_file, i, &entry))
+         continue;
+
+      ref_path = entry->full_path;
+      if (string_is_empty(ref_path))
+         continue;
+
+      /* Look for this file in scan results */
+      for (j = 0; j < _db->scan_results.count; j++)
+      {
+         scan_result_t *result = &_db->scan_results.results[j];
+         char result_path_resolved[PATH_MAX_LENGTH];
+
+         result_path_resolved[0] = '\0';
+
+         if (!result->entry_path)
+            continue;
+
+         /* Resolve the scan result path to absolute form for comparison */
+         strlcpy(result_path_resolved, result->entry_path,
+               sizeof(result_path_resolved));
+         path_resolve_realpath(result_path_resolved,
+               sizeof(result_path_resolved), false);
+
+         if (string_is_equal(ref_path, result_path_resolved))
+         {
+            /* Found a match! */
+            if (!found_match)
+            {
+               /* First match - save the info */
+               found_match = true;
+               strlcpy(first_matched_db, result->db_name,
+                     sizeof(first_matched_db));
+               strlcpy(first_matched_crc, result->db_crc,
+                     sizeof(first_matched_crc));
+               strlcpy(collapsed_title, result->entry_label,
+                     sizeof(collapsed_title));
+
+               /* Remove disc indicator from title */
+               remove_disc_indicators(collapsed_title,
+                     sizeof(collapsed_title));
+            }
+
+            /* Mark this result for removal */
+            /* We'll remove it by setting entry_path to NULL */
+            /* and compacting the array later */
+            if (result->entry_path)
+            {
+               free(result->entry_path);
+               result->entry_path = NULL;
+            }
+         }
+      }
+   }
+
+   m3u_file_free(m3u_file);
+
+   /* If we found at least one match, add M3U entry */
+   if (found_match)
+   {
+      if (!scan_results_add(&_db->scan_results, m3u_path, collapsed_title,
+                            first_matched_crc, first_matched_db, NULL))
+      {
+         RARCH_ERR("[Scanner] Failed to add M3U result: \"%s\"\n", m3u_path);
+      }
+      else
+      {
+         RARCH_LOG("[Scanner] Matched M3U \"%s\" to \"%s\"\n",
+                  collapsed_title, first_matched_db);
+      }
+   }
+
+   /* Compact scan_results to remove NULL entries */
+   {
+      size_t write_idx = 0;
+      for (i = 0; i < _db->scan_results.count; i++)
+      {
+         if (_db->scan_results.results[i].entry_path != NULL)
+         {
+            if (write_idx != i)
+               _db->scan_results.results[write_idx] =
+                  _db->scan_results.results[i];
+            write_idx++;
+         }
+         else
+         {
+            /* Free any remaining allocated fields */
+            if (_db->scan_results.results[i].entry_label)
+               free(_db->scan_results.results[i].entry_label);
+            if (_db->scan_results.results[i].db_crc)
+               free(_db->scan_results.results[i].db_crc);
+            if (_db->scan_results.results[i].db_name)
+               free(_db->scan_results.results[i].db_name);
+            if (_db->scan_results.results[i].archive_name)
+               free(_db->scan_results.results[i].archive_name);
+         }
+      }
+      _db->scan_results.count = write_idx;
+   }
 }
 
 static void gdi_prune(database_info_handle_t *db, const char *name)
@@ -1393,6 +1597,14 @@ static void task_database_handler(retro_task_t *task)
                goto task_finished;
             }
 
+            /* Initialize M3U list tracking */
+            dbstate->m3u_list = string_list_new();
+            if (!dbstate->m3u_list)
+            {
+               RARCH_ERR("[Scanner] Failed to initialize M3U list\n");
+               goto task_finished;
+            }
+
             RARCH_LOG("[Scanner] %s\"%s\"...\n", msg_hash_to_str(MSG_MANUAL_CONTENT_SCAN_START), db->fullpath);
             if (retroarch_override_setting_is_set(RARCH_OVERRIDE_SETTING_DATABASE_SCAN, NULL))
                printf("%s\"%s\"...\n", msg_hash_to_str(MSG_MANUAL_CONTENT_SCAN_START), db->fullpath);
@@ -1401,6 +1613,16 @@ static void task_database_handler(retro_task_t *task)
          break;
       case DATABASE_STATUS_ITERATE_START:
          name                 = database_info_get_current_element_name(dbinfo);
+
+         /* Check if this is an M3U file and add to list for post-processing */
+         if (path_is_valid(name) && string_is_equal_noncase(path_get_extension(name), "m3u"))
+         {
+            union string_list_elem_attr attr;
+            attr.i = 0;
+            if (dbstate->m3u_list)
+               string_list_append(dbstate->m3u_list, name, attr);
+         }
+
          task_database_cleanup_state(dbstate);
          dbstate->list_index  = 0;
          dbstate->entry_index = 0;
@@ -1459,6 +1681,22 @@ static void task_database_handler(retro_task_t *task)
 #else
             fprintf(stderr, "msg: %s\n", msg);
 #endif
+            /* Process M3U files after main scan completes */
+            if (dbstate->m3u_list && dbstate->m3u_list->size > 0)
+            {
+               size_t m;
+               RARCH_LOG("[Scanner] Processing %u M3U files...\n",
+                     (unsigned)dbstate->m3u_list->size);
+
+               /* Scan M3U files and collapse disc entries */
+               for (m = 0; m < dbstate->m3u_list->size; m++)
+               {
+                  const char *m3u_path = dbstate->m3u_list->elems[m].data;
+                  if (m3u_path)
+                     task_database_iterate_m3u(db, dbstate, m3u_path);
+               }
+            }
+
             /* Batch update all playlists with accumulated results */
             if (db->scan_results.count > 0)
                scan_results_batch_update_playlists(&db->scan_results, db);
@@ -1485,6 +1723,8 @@ task_finished:
    {
       if (dbstate->list)
          dir_list_free(dbstate->list);
+      if (dbstate->m3u_list)
+         string_list_free(dbstate->m3u_list);
    }
 
    if (db)
