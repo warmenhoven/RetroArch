@@ -174,6 +174,11 @@ void apple_input_keyboard_event(bool down,
 void apple_direct_input_keyboard_event(bool down,
       unsigned code, uint32_t character, uint32_t mod, unsigned device);
 
+#if TARGET_OS_IPHONE
+/* Map Unicode character to RETROK_* code for UIKeyCommand fallback (iOS 12-13.3) */
+enum retro_key cocoa_character_to_retrok(uint32_t c);
+#endif
+
 RETRO_END_DECLS
 
 #endif
