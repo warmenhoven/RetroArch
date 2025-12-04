@@ -375,50 +375,232 @@ enum
    return [super _keyCommandForEvent:event];
 }
 #else
+/* Track currently pressed keys for key-up simulation (iOS 12-13.3 only) */
+static NSMutableSet<NSNumber *> *legacyPressedKeys = nil;
+
+/* Build array of UIKeyCommand for keyboard input (iOS 12-13.3 fallback) */
+- (NSArray<UIKeyCommand *> *)keyCommands
+{
+   /* Only use UIKeyCommand fallback on iOS 12-13.3 */
+   if (@available(iOS 13.4, *))
+      return nil;
+
+   static NSArray<UIKeyCommand *> *commands = nil;
+   static dispatch_once_t once;
+   dispatch_once(&once, ^{
+      NSMutableArray *cmds = [NSMutableArray arrayWithCapacity:128];
+
+      /* Letters a-z */
+      for (unichar c = 'a'; c <= 'z'; c++)
+      {
+         NSString *input = [NSString stringWithCharacters:&c length:1];
+         [cmds addObject:[UIKeyCommand keyCommandWithInput:input
+                                             modifierFlags:0
+                                                    action:@selector(handleLegacyKeyCommand:)]];
+         [cmds addObject:[UIKeyCommand keyCommandWithInput:input
+                                             modifierFlags:UIKeyModifierShift
+                                                    action:@selector(handleLegacyKeyCommand:)]];
+         [cmds addObject:[UIKeyCommand keyCommandWithInput:input
+                                             modifierFlags:UIKeyModifierControl
+                                                    action:@selector(handleLegacyKeyCommand:)]];
+         [cmds addObject:[UIKeyCommand keyCommandWithInput:input
+                                             modifierFlags:UIKeyModifierAlternate
+                                                    action:@selector(handleLegacyKeyCommand:)]];
+      }
+
+      /* Digits 0-9 */
+      for (unichar c = '0'; c <= '9'; c++)
+      {
+         NSString *input = [NSString stringWithCharacters:&c length:1];
+         [cmds addObject:[UIKeyCommand keyCommandWithInput:input
+                                             modifierFlags:0
+                                                    action:@selector(handleLegacyKeyCommand:)]];
+         [cmds addObject:[UIKeyCommand keyCommandWithInput:input
+                                             modifierFlags:UIKeyModifierShift
+                                                    action:@selector(handleLegacyKeyCommand:)]];
+      }
+
+      /* Punctuation */
+      NSString *punct = @"-=[]\\;',./`";
+      for (NSUInteger i = 0; i < punct.length; i++)
+      {
+         unichar c = [punct characterAtIndex:i];
+         NSString *input = [NSString stringWithCharacters:&c length:1];
+         [cmds addObject:[UIKeyCommand keyCommandWithInput:input
+                                             modifierFlags:0
+                                                    action:@selector(handleLegacyKeyCommand:)]];
+      }
+
+      /* Space, Tab, Return */
+      [cmds addObject:[UIKeyCommand keyCommandWithInput:@" "
+                                          modifierFlags:0
+                                                 action:@selector(handleLegacyKeyCommand:)]];
+      [cmds addObject:[UIKeyCommand keyCommandWithInput:@"\t"
+                                          modifierFlags:0
+                                                 action:@selector(handleLegacyKeyCommand:)]];
+      [cmds addObject:[UIKeyCommand keyCommandWithInput:@"\r"
+                                          modifierFlags:0
+                                                 action:@selector(handleLegacyKeyCommand:)]];
+
+      /* Arrow keys and Escape */
+      [cmds addObject:[UIKeyCommand keyCommandWithInput:UIKeyInputUpArrow
+                                          modifierFlags:0
+                                                 action:@selector(handleLegacyKeyCommand:)]];
+      [cmds addObject:[UIKeyCommand keyCommandWithInput:UIKeyInputDownArrow
+                                          modifierFlags:0
+                                                 action:@selector(handleLegacyKeyCommand:)]];
+      [cmds addObject:[UIKeyCommand keyCommandWithInput:UIKeyInputLeftArrow
+                                          modifierFlags:0
+                                                 action:@selector(handleLegacyKeyCommand:)]];
+      [cmds addObject:[UIKeyCommand keyCommandWithInput:UIKeyInputRightArrow
+                                          modifierFlags:0
+                                                 action:@selector(handleLegacyKeyCommand:)]];
+      [cmds addObject:[UIKeyCommand keyCommandWithInput:UIKeyInputEscape
+                                          modifierFlags:0
+                                                 action:@selector(handleLegacyKeyCommand:)]];
+
+      commands = [cmds copy];
+   });
+   return commands;
+}
+
+/* Handle key-down from UIKeyCommand (iOS 12-13.3 fallback) */
+- (void)handleLegacyKeyCommand:(UIKeyCommand *)command
+{
+   NSString *input           = command.input;
+   UIKeyModifierFlags mflags = command.modifierFlags;
+   uint32_t mod              = 0;
+   uint32_t character        = 0;
+   enum retro_key rk         = RETROK_UNKNOWN;
+
+   if (ios_keyboard_active())
+      return;
+
+   /* Convert modifiers */
+   if (mflags & UIKeyModifierAlphaShift)
+      mod |= RETROKMOD_CAPSLOCK;
+   if (mflags & UIKeyModifierShift)
+      mod |= RETROKMOD_SHIFT;
+   if (mflags & UIKeyModifierControl)
+      mod |= RETROKMOD_CTRL;
+   if (mflags & UIKeyModifierAlternate)
+      mod |= RETROKMOD_ALT;
+   if (mflags & UIKeyModifierCommand)
+      mod |= RETROKMOD_META;
+
+   /* Handle special input strings */
+   if ([input isEqualToString:UIKeyInputUpArrow])
+      rk = RETROK_UP;
+   else if ([input isEqualToString:UIKeyInputDownArrow])
+      rk = RETROK_DOWN;
+   else if ([input isEqualToString:UIKeyInputLeftArrow])
+      rk = RETROK_LEFT;
+   else if ([input isEqualToString:UIKeyInputRightArrow])
+      rk = RETROK_RIGHT;
+   else if ([input isEqualToString:UIKeyInputEscape])
+      rk = RETROK_ESCAPE;
+   else if (input.length > 0)
+   {
+      character = [input characterAtIndex:0];
+      rk        = cocoa_character_to_retrok(character);
+   }
+
+   if (rk == RETROK_UNKNOWN)
+      return;
+
+   /* Initialize pressed keys set */
+   if (!legacyPressedKeys)
+      legacyPressedKeys = [NSMutableSet set];
+
+   /* Track this key as pressed */
+   [legacyPressedKeys addObject:@(rk)];
+
+   /* Send key-down event */
+   apple_direct_input_keyboard_event(true, rk, character, mod,
+                                     RETRO_DEVICE_KEYBOARD);
+}
+
 - (void)handleUIPress:(UIPress *)press withEvent:(UIPressesEvent *)event down:(BOOL)down
 {
-   NSString       *ch;
-   uint32_t character = 0;
-   uint32_t mod       = 0;
-   NSUInteger mods    = 0;
+   /* iOS 13.4+: Use UIPress.key for full keyboard support */
    if (@available(iOS 13.4, tvOS 13.4, *))
    {
-      ch = (NSString*)press.key.characters;
-      mods = event.modifierFlags;
-   }
+      NSString   *ch        = (NSString*)press.key.characters;
+      uint32_t    character = 0;
+      uint32_t    mod       = 0;
+      NSUInteger  mods      = event.modifierFlags;
 
-   if (mods & UIKeyModifierAlphaShift)
-      mod |= RETROKMOD_CAPSLOCK;
-   if (mods & UIKeyModifierShift)
-      mod |= RETROKMOD_SHIFT;
-   if (mods & UIKeyModifierControl)
-      mod |= RETROKMOD_CTRL;
-   if (mods & UIKeyModifierAlternate)
-      mod |= RETROKMOD_ALT;
-   if (mods & UIKeyModifierCommand)
-      mod |= RETROKMOD_META;
-   if (mods & UIKeyModifierNumericPad)
-      mod |= RETROKMOD_NUMLOCK;
+      if (mods & UIKeyModifierAlphaShift)
+         mod |= RETROKMOD_CAPSLOCK;
+      if (mods & UIKeyModifierShift)
+         mod |= RETROKMOD_SHIFT;
+      if (mods & UIKeyModifierControl)
+         mod |= RETROKMOD_CTRL;
+      if (mods & UIKeyModifierAlternate)
+         mod |= RETROKMOD_ALT;
+      if (mods & UIKeyModifierCommand)
+         mod |= RETROKMOD_META;
+      if (mods & UIKeyModifierNumericPad)
+         mod |= RETROKMOD_NUMLOCK;
 
-   if (ch && ch.length != 0)
-   {
-      unsigned i;
-      character = [ch characterAtIndex:0];
+      if (ch && ch.length != 0)
+      {
+         unsigned i;
+         character = [ch characterAtIndex:0];
 
-      apple_input_keyboard_event(down,
-                                 (uint32_t)press.key.keyCode, 0, mod,
-                                 RETRO_DEVICE_KEYBOARD);
-
-      for (i = 1; i < ch.length; i++)
          apple_input_keyboard_event(down,
-                                    0, [ch characterAtIndex:i], mod,
+                                    (uint32_t)press.key.keyCode, 0, mod,
                                     RETRO_DEVICE_KEYBOARD);
-   }
 
-   if (@available(iOS 13.4, tvOS 13.4, *))
+         for (i = 1; i < ch.length; i++)
+            apple_input_keyboard_event(down,
+                                       0, [ch characterAtIndex:i], mod,
+                                       RETRO_DEVICE_KEYBOARD);
+      }
+
       apple_input_keyboard_event(down,
                                  (uint32_t)press.key.keyCode, character, mod,
                                  RETRO_DEVICE_KEYBOARD);
+      return;
+   }
+
+   /* iOS 12-13.3: Use UIPress.type for arrow keys only
+    * (character keys handled by UIKeyCommand) */
+   {
+      enum retro_key rk = RETROK_UNKNOWN;
+
+      switch (press.type)
+      {
+         case UIPressTypeUpArrow:
+            rk = RETROK_UP;
+            break;
+         case UIPressTypeDownArrow:
+            rk = RETROK_DOWN;
+            break;
+         case UIPressTypeLeftArrow:
+            rk = RETROK_LEFT;
+            break;
+         case UIPressTypeRightArrow:
+            rk = RETROK_RIGHT;
+            break;
+         default:
+            break;
+      }
+
+      if (rk != RETROK_UNKNOWN)
+      {
+         /* Track arrow key state */
+         if (!legacyPressedKeys)
+            legacyPressedKeys = [NSMutableSet set];
+
+         if (down)
+            [legacyPressedKeys addObject:@(rk)];
+         else
+            [legacyPressedKeys removeObject:@(rk)];
+
+         apple_direct_input_keyboard_event(down, rk, 0, 0, RETRO_DEVICE_KEYBOARD);
+      }
+   }
 }
 
 - (void)pressesBegan:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event
@@ -442,6 +624,31 @@ enum
 
    for (UIPress *press in presses)
       [self handleUIPress:press withEvent:event down:NO];
+
+   /* iOS 12-13.3: Release all tracked character keys
+    * Since we can't identify which specific key was released via UIPress.type,
+    * we release all tracked keys when any key is released.
+    * Arrow keys are already handled properly in handleUIPress above. */
+   if (@available(iOS 13.4, *))
+   {
+      /* iOS 13.4+ handles key-up properly via UIPress.key */
+   }
+   else if (legacyPressedKeys.count > 0)
+   {
+      for (NSNumber *keyNum in [legacyPressedKeys copy])
+      {
+         enum retro_key rk = (enum retro_key)[keyNum intValue];
+         /* Arrow keys were already released in handleUIPress above */
+         if (rk != RETROK_UP && rk != RETROK_DOWN &&
+             rk != RETROK_LEFT && rk != RETROK_RIGHT)
+         {
+            apple_direct_input_keyboard_event(false, rk, 0, 0,
+                                              RETRO_DEVICE_KEYBOARD);
+         }
+      }
+      [legacyPressedKeys removeAllObjects];
+   }
+
    [super pressesEnded:presses withEvent:event];
 }
 #endif
