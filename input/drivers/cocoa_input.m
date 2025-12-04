@@ -109,6 +109,46 @@ void apple_direct_input_keyboard_event(bool down,
 }
 
 #if TARGET_OS_IPHONE
+/* Map Unicode character to RETROK_* code for UIKeyCommand fallback (iOS 12-13.3)
+ * RETROK codes are ASCII-based, so most characters map directly */
+enum retro_key cocoa_character_to_retrok(uint32_t c)
+{
+   /* Letters a-z (RETROK_a = 97 = 'a') */
+   if (c >= 'a' && c <= 'z')
+      return (enum retro_key)c;
+   if (c >= 'A' && c <= 'Z')
+      return (enum retro_key)(c - 'A' + 'a');
+
+   /* Digits 0-9 (RETROK_0 = 48 = '0') */
+   if (c >= '0' && c <= '9')
+      return (enum retro_key)c;
+
+   /* Special characters - most map to ASCII */
+   switch (c)
+   {
+      case ' ':  return RETROK_SPACE;
+      case '\t': return RETROK_TAB;
+      case '\r':
+      case '\n': return RETROK_RETURN;
+      case 0x1B: return RETROK_ESCAPE;
+      case 0x7F: return RETROK_BACKSPACE;
+      case '-':  return RETROK_MINUS;
+      case '=':  return RETROK_EQUALS;
+      case '[':  return RETROK_LEFTBRACKET;
+      case ']':  return RETROK_RIGHTBRACKET;
+      case ';':  return RETROK_SEMICOLON;
+      case '\'': return RETROK_QUOTE;
+      case '`':  return RETROK_BACKQUOTE;
+      case ',':  return RETROK_COMMA;
+      case '.':  return RETROK_PERIOD;
+      case '/':  return RETROK_SLASH;
+      case '\\': return RETROK_BACKSLASH;
+      default:   return RETROK_UNKNOWN;
+   }
+}
+#endif
+
+#if TARGET_OS_IPHONE
 static bool apple_input_handle_small_keyboard(unsigned* code, bool down)
 {
    static uint8_t mapping[128];
