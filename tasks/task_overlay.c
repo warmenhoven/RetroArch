@@ -20,8 +20,10 @@
 #include <retro_miscellaneous.h>
 #include <file/file_path.h>
 #include <file/config_file.h>
+#include <file/archive_file.h>
 #include <streams/file_stream.h>
 #include <string/stdstring.h>
+#include <formats/image.h>
 #include <lrc_hash.h>
 
 #include "tasks_internal.h"
@@ -32,12 +34,20 @@
 #include "../input/input_remapping.h"
 #include "../verbosity.h"
 
+/* Zip file magic bytes: "PK\x03\x04" */
+#define ZIP_MAGIC_BYTE_0 0x50
+#define ZIP_MAGIC_BYTE_1 0x4B
+#define ZIP_MAGIC_BYTE_2 0x03
+#define ZIP_MAGIC_BYTE_3 0x04
+
 typedef struct overlay_loader overlay_loader_t;
 
 struct overlay_loader
 {
    config_file_t *conf;
    char *overlay_path;
+   char *zip_path;       /* Path to zip file when loading from archive */
+   char *zip_cfg_path;   /* Internal path to .cfg within zip */
    struct overlay *overlays;
    struct overlay *active;
 
@@ -53,6 +63,405 @@ struct overlay_loader
 
    uint8_t flags;
 };
+
+/**
+ * overlay_file_is_zip:
+ * @path: Path to file to check
+ *
+ * Check if file is a zip archive by reading magic bytes.
+ * Does not rely on file extension.
+ *
+ * Returns: true if file is a zip archive, false otherwise.
+ */
+static bool overlay_file_is_zip(const char *path)
+{
+   RFILE *file;
+   uint8_t magic[4];
+   bool is_zip = false;
+
+   if (string_is_empty(path))
+      return false;
+
+   file = filestream_open(path,
+         RETRO_VFS_FILE_ACCESS_READ,
+         RETRO_VFS_FILE_ACCESS_HINT_NONE);
+
+   if (!file)
+      return false;
+
+   if (filestream_read(file, magic, 4) == 4)
+   {
+      is_zip = (magic[0] == ZIP_MAGIC_BYTE_0 &&
+                magic[1] == ZIP_MAGIC_BYTE_1 &&
+                magic[2] == ZIP_MAGIC_BYTE_2 &&
+                magic[3] == ZIP_MAGIC_BYTE_3);
+   }
+
+   filestream_close(file);
+   return is_zip;
+}
+
+/**
+ * overlay_zip_read_file:
+ * @zip_path: Path to zip archive
+ * @internal_path: Path to file within archive
+ * @buf: Output buffer (allocated by this function)
+ * @len: Output length
+ *
+ * Read a file from within a zip archive into a buffer.
+ *
+ * Returns: true on success, false on failure.
+ */
+static bool overlay_zip_read_file(const char *zip_path,
+      const char *internal_path, void **buf, int64_t *len)
+{
+   char full_path[PATH_MAX_LENGTH];
+
+   if (string_is_empty(zip_path) || string_is_empty(internal_path))
+      return false;
+
+   /* Build archive#path format expected by file_archive_compressed_read */
+   snprintf(full_path, sizeof(full_path), "%s#%s", zip_path, internal_path);
+
+   return file_archive_compressed_read(full_path, buf, NULL, len) == 1;
+}
+
+/**
+ * overlay_zip_find_cfg:
+ * @zip_path: Path to zip archive
+ * @cfg_path: Output buffer for config file path within archive
+ * @cfg_path_size: Size of output buffer
+ *
+ * Find the first .cfg file within a zip archive.
+ *
+ * Returns: true if a .cfg file was found, false otherwise.
+ */
+static bool overlay_zip_find_cfg(const char *zip_path,
+      char *cfg_path, size_t cfg_path_size)
+{
+   struct string_list *list;
+   size_t i;
+   bool found = false;
+
+   if (string_is_empty(zip_path))
+      return false;
+
+   list = file_archive_get_file_list(zip_path, NULL);
+   if (!list)
+      return false;
+
+   /* Find first .cfg file in archive */
+   for (i = 0; i < list->size; i++)
+   {
+      const char *entry = list->elems[i].data;
+      const char *ext   = path_get_extension(entry);
+
+      if (ext && string_is_equal_noncase(ext, "cfg"))
+      {
+         strlcpy(cfg_path, entry, cfg_path_size);
+         found = true;
+         break;
+      }
+   }
+
+   string_list_free(list);
+   return found;
+}
+
+/**
+ * overlay_zip_resolve_path:
+ * @base_cfg_path: Path to .cfg file within archive (for relative resolution)
+ * @relative_path: Relative path from .cfg file
+ * @resolved: Output buffer for resolved path
+ * @resolved_size: Size of output buffer
+ *
+ * Resolve a relative path within a zip archive.
+ * Similar to fill_pathname_resolve_relative but for archive-internal paths.
+ */
+static void overlay_zip_resolve_path(const char *base_cfg_path,
+      const char *relative_path, char *resolved, size_t resolved_size)
+{
+   char base_dir[PATH_MAX_LENGTH];
+
+   if (string_is_empty(relative_path))
+   {
+      resolved[0] = '\0';
+      return;
+   }
+
+   /* If relative_path starts with '/', treat as absolute within archive */
+   if (relative_path[0] == '/')
+   {
+      strlcpy(resolved, relative_path + 1, resolved_size);
+      return;
+   }
+
+   /* Get directory portion of base_cfg_path */
+   strlcpy(base_dir, base_cfg_path, sizeof(base_dir));
+   path_basedir(base_dir);
+
+   /* Handle empty base dir (cfg at root of archive) */
+   if (string_is_empty(base_dir) || string_is_equal(base_dir, "./"))
+   {
+      strlcpy(resolved, relative_path, resolved_size);
+      return;
+   }
+
+   /* Concatenate base dir with relative path */
+   fill_pathname_join(resolved, base_dir, relative_path, resolved_size);
+}
+
+/* Forward declaration for recursive include processing */
+static char *overlay_zip_process_includes(const char *zip_path,
+      const char *cfg_path, const char *content, unsigned depth);
+
+/**
+ * overlay_zip_load_config_recursive:
+ * @zip_path: Path to zip archive
+ * @cfg_path: Path to config file within archive
+ * @depth: Current recursion depth for include processing
+ *
+ * Load a config file from within a zip archive and process any
+ * #include directives by inlining the included content.
+ *
+ * Returns: Newly allocated string with config content, or NULL on failure.
+ *          Caller must free the returned string.
+ */
+static char *overlay_zip_load_config(const char *zip_path,
+      const char *cfg_path, unsigned depth)
+{
+   void *buf = NULL;
+   int64_t len = 0;
+   char *content;
+   char *processed;
+
+   if (depth > 16) /* MAX_INCLUDE_DEPTH */
+   {
+      RARCH_ERR("[Overlay] Include depth exceeded in zip overlay.\n");
+      return NULL;
+   }
+
+   if (!overlay_zip_read_file(zip_path, cfg_path, &buf, &len))
+      return NULL;
+
+   if (!buf || len <= 0)
+   {
+      free(buf);
+      return NULL;
+   }
+
+   /* Ensure null termination */
+   content = (char*)malloc(len + 1);
+   if (!content)
+   {
+      free(buf);
+      return NULL;
+   }
+   memcpy(content, buf, len);
+   content[len] = '\0';
+   free(buf);
+
+   /* Process #include directives */
+   processed = overlay_zip_process_includes(zip_path, cfg_path, content, depth);
+   free(content);
+
+   return processed;
+}
+
+/**
+ * overlay_zip_process_includes:
+ * @zip_path: Path to zip archive
+ * @cfg_path: Path to current config file within archive
+ * @content: Config file content to process
+ * @depth: Current recursion depth
+ *
+ * Process #include directives in config content by loading and inlining
+ * the included files from within the zip archive.
+ *
+ * Returns: Newly allocated string with includes inlined, or NULL on failure.
+ *          Caller must free the returned string.
+ */
+static char *overlay_zip_process_includes(const char *zip_path,
+      const char *cfg_path, const char *content, unsigned depth)
+{
+   char *result;
+   char *result_new;
+   size_t result_size;
+   size_t result_len;
+   const char *line_start;
+   const char *line_end;
+
+   if (!content)
+      return NULL;
+
+   /* Start with buffer twice the size of content to allow for expansion */
+   result_size = strlen(content) * 2 + 1;
+   result = (char*)malloc(result_size);
+   if (!result)
+      return NULL;
+   result[0] = '\0';
+   result_len = 0;
+
+   line_start = content;
+
+   while (*line_start)
+   {
+      const char *include_start;
+      size_t line_len;
+
+      /* Find end of line */
+      line_end = strchr(line_start, '\n');
+      if (!line_end)
+         line_end = line_start + strlen(line_start);
+
+      line_len = line_end - line_start;
+
+      /* Check for #include directive */
+      include_start = strstr(line_start, "#include");
+      if (include_start && include_start < line_end)
+      {
+         const char *quote_start;
+         const char *quote_end;
+         char include_path[PATH_MAX_LENGTH];
+         char resolved_path[PATH_MAX_LENGTH];
+         char *included_content;
+
+         /* Find the quoted path: #include "path" */
+         quote_start = strchr(include_start, '"');
+         if (quote_start && quote_start < line_end)
+         {
+            quote_end = strchr(quote_start + 1, '"');
+            if (quote_end && quote_end <= line_end)
+            {
+               size_t path_len = quote_end - quote_start - 1;
+               if (path_len < sizeof(include_path))
+               {
+                  memcpy(include_path, quote_start + 1, path_len);
+                  include_path[path_len] = '\0';
+
+                  /* Resolve the include path relative to current cfg */
+                  overlay_zip_resolve_path(cfg_path, include_path,
+                        resolved_path, sizeof(resolved_path));
+
+                  /* Recursively load the included file */
+                  included_content = overlay_zip_load_config(
+                        zip_path, resolved_path, depth + 1);
+
+                  if (included_content)
+                  {
+                     size_t inc_len = strlen(included_content);
+
+                     /* Ensure we have space */
+                     while (result_len + inc_len + 2 >= result_size)
+                     {
+                        result_size *= 2;
+                        result_new = (char*)realloc(result, result_size);
+                        if (!result_new)
+                        {
+                           free(result);
+                           free(included_content);
+                           return NULL;
+                        }
+                        result = result_new;
+                     }
+
+                     /* Append included content */
+                     memcpy(result + result_len, included_content, inc_len);
+                     result_len += inc_len;
+                     if (result[result_len - 1] != '\n')
+                        result[result_len++] = '\n';
+                     result[result_len] = '\0';
+
+                     free(included_content);
+
+                     /* Skip to next line */
+                     line_start = (*line_end) ? line_end + 1 : line_end;
+                     continue;
+                  }
+               }
+            }
+         }
+      }
+
+      /* Not an include line, copy it as-is */
+      while (result_len + line_len + 2 >= result_size)
+      {
+         result_size *= 2;
+         result_new = (char*)realloc(result, result_size);
+         if (!result_new)
+         {
+            free(result);
+            return NULL;
+         }
+         result = result_new;
+      }
+
+      memcpy(result + result_len, line_start, line_len);
+      result_len += line_len;
+      result[result_len++] = '\n';
+      result[result_len] = '\0';
+
+      /* Move to next line */
+      line_start = (*line_end) ? line_end + 1 : line_end;
+   }
+
+   return result;
+}
+
+/**
+ * overlay_zip_load_image:
+ * @loader: Overlay loader context
+ * @image_path: Relative path to image within archive
+ * @img: Output texture_image structure
+ *
+ * Load an image from within a zip archive.
+ *
+ * Returns: true on success, false on failure.
+ */
+static bool overlay_zip_load_image(overlay_loader_t *loader,
+      const char *image_path, struct texture_image *img)
+{
+   void *buf = NULL;
+   int64_t len = 0;
+   char resolved_path[PATH_MAX_LENGTH];
+   enum image_type_enum img_type;
+   bool result;
+
+   if (!loader || string_is_empty(image_path))
+      return false;
+
+   /* Resolve path relative to config file location */
+   overlay_zip_resolve_path(loader->zip_cfg_path, image_path,
+         resolved_path, sizeof(resolved_path));
+
+   /* Read image data from zip */
+   if (!overlay_zip_read_file(loader->zip_path, resolved_path, &buf, &len))
+   {
+      RARCH_ERR("[Overlay] Failed to read image from zip: %s\n", resolved_path);
+      return false;
+   }
+
+   if (!buf || len <= 0)
+   {
+      free(buf);
+      return false;
+   }
+
+   /* Determine image type from path */
+   img_type = image_texture_get_type(resolved_path);
+   if (img_type == IMAGE_TYPE_NONE)
+   {
+      /* Try to detect from data or default to PNG */
+      img_type = IMAGE_TYPE_PNG;
+   }
+
+   /* Load image from buffer */
+   img->supports_rgba = (loader->flags & OVERLAY_LOADER_RGBA_SUPPORT) ? true : false;
+   result = image_texture_load_buffer(img, img_type, buf, (size_t)len);
+
+   free(buf);
+   return result;
+}
 
 static void task_overlay_image_done(struct overlay *overlay)
 {
@@ -82,13 +491,27 @@ static void task_overlay_load_desc_image(
             image_path, sizeof(image_path)))
    {
       struct texture_image image_tex;
-      char path[PATH_MAX_LENGTH];
-      fill_pathname_resolve_relative(path, loader->overlay_path,
-            image_path, sizeof(path));
+      bool loaded = false;
 
-      image_tex.supports_rgba = (loader->flags & OVERLAY_LOADER_RGBA_SUPPORT) ? true : false;
+      memset(&image_tex, 0, sizeof(image_tex));
 
-      if (image_texture_load(&image_tex, path))
+      if (loader->flags & OVERLAY_LOADER_FROM_ZIP)
+      {
+         /* Load image from zip archive */
+         loaded = overlay_zip_load_image(loader, image_path, &image_tex);
+      }
+      else
+      {
+         /* Load image from filesystem */
+         char path[PATH_MAX_LENGTH];
+         fill_pathname_resolve_relative(path, loader->overlay_path,
+               image_path, sizeof(path));
+
+         image_tex.supports_rgba = (loader->flags & OVERLAY_LOADER_RGBA_SUPPORT) ? true : false;
+         loaded = image_texture_load(&image_tex, path);
+      }
+
+      if (loaded)
       {
          input_overlay->load_images[input_overlay->load_images_size++] = image_tex;
          desc->image       = image_tex;
@@ -782,23 +1205,42 @@ static void task_overlay_deferred_load(retro_task_t *task)
       if (!string_is_empty(overlay->config.paths.path))
       {
          struct texture_image image_tex;
-         char overlay_resolved_path[PATH_MAX_LENGTH];
 
-         overlay_resolved_path[0] = '\0';
+         memset(&image_tex, 0, sizeof(image_tex));
 
-         fill_pathname_resolve_relative(overlay_resolved_path,
-               loader->overlay_path,
-               overlay->config.paths.path, sizeof(overlay_resolved_path));
-
-         image_tex.supports_rgba =
-               (loader->flags & OVERLAY_LOADER_RGBA_SUPPORT) ? true : false;
-
-         if (!image_texture_load(&image_tex, overlay_resolved_path))
+         if (loader->flags & OVERLAY_LOADER_FROM_ZIP)
          {
-            RARCH_ERR("[Overlay] Failed to load image: \"%s\".\n",
-                  overlay_resolved_path);
-            loader->loading_status = OVERLAY_IMAGE_TRANSFER_ERROR;
-            goto error;
+            /* Load image from zip archive */
+            if (!overlay_zip_load_image(loader,
+                     overlay->config.paths.path, &image_tex))
+            {
+               RARCH_ERR("[Overlay] Failed to load image from zip: \"%s\".\n",
+                     overlay->config.paths.path);
+               loader->loading_status = OVERLAY_IMAGE_TRANSFER_ERROR;
+               goto error;
+            }
+         }
+         else
+         {
+            /* Load image from filesystem */
+            char overlay_resolved_path[PATH_MAX_LENGTH];
+
+            overlay_resolved_path[0] = '\0';
+
+            fill_pathname_resolve_relative(overlay_resolved_path,
+                  loader->overlay_path,
+                  overlay->config.paths.path, sizeof(overlay_resolved_path));
+
+            image_tex.supports_rgba =
+                  (loader->flags & OVERLAY_LOADER_RGBA_SUPPORT) ? true : false;
+
+            if (!image_texture_load(&image_tex, overlay_resolved_path))
+            {
+               RARCH_ERR("[Overlay] Failed to load image: \"%s\".\n",
+                     overlay_resolved_path);
+               loader->loading_status = OVERLAY_IMAGE_TRANSFER_ERROR;
+               goto error;
+            }
          }
 
          overlay->load_images[overlay->load_images_size++] = image_tex;
@@ -1031,6 +1473,12 @@ static void task_overlay_free(retro_task_t *task)
    if (loader->conf)
       config_file_free(loader->conf);
 
+   if (loader->zip_path)
+      free(loader->zip_path);
+
+   if (loader->zip_cfg_path)
+      free(loader->zip_cfg_path);
+
    free(loader);
 }
 
@@ -1099,6 +1547,7 @@ bool task_push_overlay_load_default(
    retro_task_t *t          = NULL;
    config_file_t *conf      = NULL;
    overlay_loader_t *loader = NULL;
+   bool is_zip              = false;
 
    if (string_is_empty(overlay_path))
       return false;
@@ -1115,16 +1564,71 @@ bool task_push_overlay_load_default(
    if (!loader)
       return false;
 
-   if (!(conf = config_file_new_from_path_to_string(overlay_path)))
+   /* Check if this is a zip archive (by magic bytes, not extension) */
+   is_zip = overlay_file_is_zip(overlay_path);
+
+   if (is_zip)
    {
-      free(loader);
-      return false;
+      char cfg_path[PATH_MAX_LENGTH];
+      char *config_str = NULL;
+
+      /* Find the .cfg file within the zip */
+      if (!overlay_zip_find_cfg(overlay_path, cfg_path, sizeof(cfg_path)))
+      {
+         RARCH_ERR("[Overlay] No .cfg file found in zip archive: %s\n",
+               overlay_path);
+         free(loader);
+         return false;
+      }
+
+      RARCH_LOG("[Overlay] Loading overlay from zip: %s (config: %s)\n",
+            overlay_path, cfg_path);
+
+      /* Load config with #include processing */
+      config_str = overlay_zip_load_config(overlay_path, cfg_path, 0);
+      if (!config_str)
+      {
+         RARCH_ERR("[Overlay] Failed to load config from zip: %s#%s\n",
+               overlay_path, cfg_path);
+         free(loader);
+         return false;
+      }
+
+      /* Parse the config string */
+      conf = config_file_new_from_string(config_str, overlay_path);
+      free(config_str);
+
+      if (!conf)
+      {
+         RARCH_ERR("[Overlay] Failed to parse config from zip: %s\n",
+               overlay_path);
+         free(loader);
+         return false;
+      }
+
+      /* Store zip-specific info */
+      loader->zip_path     = strdup(overlay_path);
+      loader->zip_cfg_path = strdup(cfg_path);
+      loader->flags       |= OVERLAY_LOADER_FROM_ZIP;
+   }
+   else
+   {
+      /* Standard filesystem loading */
+      if (!(conf = config_file_new_from_path_to_string(overlay_path)))
+      {
+         free(loader);
+         return false;
+      }
    }
 
    if (!config_get_uint(conf, "overlays", &loader->size))
    {
       /* Error - overlays variable not defined in config. */
       config_file_free(conf);
+      if (loader->zip_path)
+         free(loader->zip_path);
+      if (loader->zip_cfg_path)
+         free(loader->zip_cfg_path);
       free(loader);
       return false;
    }
@@ -1135,6 +1639,10 @@ bool task_push_overlay_load_default(
    if (!loader->overlays)
    {
       config_file_free(conf);
+      if (loader->zip_path)
+         free(loader->zip_path);
+      if (loader->zip_cfg_path)
+         free(loader->zip_cfg_path);
       free(loader);
       return false;
    }
@@ -1156,6 +1664,10 @@ bool task_push_overlay_load_default(
    {
       config_file_free(conf);
       free(loader->overlays);
+      if (loader->zip_path)
+         free(loader->zip_path);
+      if (loader->zip_cfg_path)
+         free(loader->zip_cfg_path);
       free(loader);
       return false;
    }
