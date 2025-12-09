@@ -111,7 +111,8 @@ enum overlay_show_input_type
 enum OVERLAY_LOADER_FLAGS
 {
    OVERLAY_LOADER_RGBA_SUPPORT = (1 << 0),
-   OVERLAY_LOADER_IS_OSK       = (1 << 1)
+   OVERLAY_LOADER_IS_OSK       = (1 << 1),
+   OVERLAY_LOADER_FROM_ZIP     = (1 << 2)
 };
 
 enum INPUT_OVERLAY_FLAGS
