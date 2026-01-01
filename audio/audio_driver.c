@@ -626,6 +626,8 @@ static void audio_driver_flush(audio_driver_state_t *audio_st,
       double rate_adjust             = 1.0;
       unsigned input_rate            = (unsigned)audio_st->input;
 
+      audio_st->flags               |= AUDIO_FLAG_HW_RESAMPLE;
+
       /* Rate control for A/V sync. The DRC compute is gated on a
        * sample-count threshold so multi-batch cores don't fire it on
        * every batch_cb; intermediate calls reuse the cached factor.
@@ -648,6 +650,8 @@ static void audio_driver_flush(audio_driver_state_t *audio_st,
             data, frames, input_rate, rate_adjust, audio_volume_gain);
       return;
    }
+
+   audio_st->flags                  &= ~AUDIO_FLAG_HW_RESAMPLE;
 
    src_data.data_out                 = NULL;
    src_data.output_frames            = 0;
