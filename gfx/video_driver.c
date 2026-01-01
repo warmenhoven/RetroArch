@@ -5252,7 +5252,7 @@ void video_driver_frame(const void *data, unsigned width,
           * (-Werror=overlength-strings in the C89 lane). */
          __len += snprintf(video_info.stat_text + __len,
                sizeof(video_info.stat_text) - __len,
-               "AUDIO: %s\n"
+               "AUDIO: %s (%s)\n"
                " Saturation: %6.2f %%\n"
                " Deviation:  %6.2f %%\n"
                " Underrun:   %6.2f %%\n"
@@ -5262,6 +5262,7 @@ void video_driver_frame(const void *data, unsigned width,
                " Resampling: %s\n"
                ,
                audio_state_get_ptr()->current_audio->ident,
+               (audio_state_get_ptr()->flags & AUDIO_FLAG_HW_RESAMPLE) ? "HW" : "SW",
                audio_stats.average_buffer_saturation,
                audio_stats.std_deviation_percentage,
                audio_stats.close_to_underrun,
