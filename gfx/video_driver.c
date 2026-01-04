@@ -17,6 +17,10 @@
 #include <stdlib.h>
 #include <math.h>
 
+#if defined(__APPLE__) || defined(__unix__)
+#include <sys/resource.h>
+#endif
+
 #include <retro_inline.h>
 #include <string/stdstring.h>
 #include <retro_math.h>
@@ -3806,6 +3810,11 @@ void video_driver_frame(const void *data, unsigned width,
    static retro_time_t fps_time;
    static float last_fps, frame_time;
    static int32_t frame_time_accumulator;
+#if defined(__APPLE__) || defined(__unix__)
+   static struct timeval last_cpu_time;
+   static retro_time_t last_cpu_wall_time;
+   static float last_cpu_percent;
+#endif
    /* Mark the start of nonblock state for
     * ignoring initial previous frame time */
    static int8_t nonblock_active;
@@ -3981,6 +3990,23 @@ void video_driver_frame(const void *data, unsigned width,
                status_text         + _len,
                sizeof(status_text) - _len,
                "%6.2f", last_fps);
+
+#if defined(__APPLE__) || defined(__unix__)
+         status_text[  _len] = ' ';
+         status_text[++_len] = '|';
+         status_text[++_len] = '|';
+         status_text[++_len] = ' ';
+         status_text[++_len] = 'C';
+         status_text[++_len] = 'P';
+         status_text[++_len] = 'U';
+         status_text[++_len] = ':';
+         status_text[++_len] = ' ';
+         status_text[++_len] = '\0';
+         _len               += snprintf(
+               status_text         + _len,
+               sizeof(status_text) - _len,
+               "%5.1f%%", last_cpu_percent);
+#endif
       }
 
       if (video_info.framecount_show)
@@ -4044,6 +4070,30 @@ void video_driver_frame(const void *data, unsigned width,
          size_t __len;
          last_fps = TIME_TO_FPS(curr_time, new_time,
                fps_update_interval);
+
+#if defined(__APPLE__) || defined(__unix__)
+         /* Update CPU usage percentage */
+         {
+            struct rusage usage;
+            if (getrusage(RUSAGE_SELF, &usage) == 0)
+            {
+               struct timeval cpu_time;
+               timeradd(&usage.ru_utime, &usage.ru_stime, &cpu_time);
+
+               if (last_cpu_wall_time > 0)
+               {
+                  int64_t cpu_delta  = (cpu_time.tv_sec - last_cpu_time.tv_sec) * 1000000
+                                     + (cpu_time.tv_usec - last_cpu_time.tv_usec);
+                  int64_t wall_delta = new_time - last_cpu_wall_time;
+
+                  if (wall_delta > 0)
+                     last_cpu_percent = (float)cpu_delta / (float)wall_delta * 100.0f;
+               }
+               last_cpu_time      = cpu_time;
+               last_cpu_wall_time = new_time;
+            }
+         }
+#endif
 
          __len = strlcpy(video_st->window_title, video_st->title_buf,
                sizeof(video_st->window_title));
