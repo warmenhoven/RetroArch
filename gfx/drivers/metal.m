@@ -850,20 +850,12 @@ font_renderer_t metal_raster_font = {
             false,
             video->is_threaded,
             FONT_DRIVER_RENDER_METAL_API);
-
-#if defined(HAVE_COCOATOUCH)
-      /* Start 120Hz presentation on ProMotion displays */
-      [_context startPresentation];
-#endif
    }
    return self;
 }
 
 - (void)dealloc
 {
-#if defined(HAVE_COCOATOUCH)
-   [_context stopPresentation];
-#endif
    if (_viewport)
    {
       free(_viewport);
@@ -2305,43 +2297,59 @@ static bool metal_ctx_get_metrics(
 }
 #endif
 
-/* Temporary workaround for metal not being able to poll flags during init */
+/* Metal context data for swap_buffers */
+static void *metal_ctx_data = NULL;
+
+static void metal_ctx_swap_buffers(void *data)
+{
+   MetalDriver *md = (__bridge MetalDriver *)metal_ctx_data;
+   if (md)
+      [md.context swapBuffers];
+}
+
+static void metal_ctx_swap_interval(void *data, int interval)
+{
+   MetalDriver *md = (__bridge MetalDriver *)metal_ctx_data;
+   if (md)
+      md.context.displaySyncEnabled = (interval != 0);
+}
+
 static gfx_ctx_driver_t metal_fake_context = {
-       NULL,
-       NULL,
-       NULL,
-       NULL,
-       NULL,
-       NULL,
-       NULL,
-       NULL, /* get_refresh_rate */
-       NULL, /* get_video_output_size */
-       NULL, /* get_video_output_prev */
-       NULL, /* get_video_output_next */
+       NULL,                    /* init */
+       NULL,                    /* destroy */
+       NULL,                    /* get_api */
+       NULL,                    /* bind_api */
+       metal_ctx_swap_interval, /* swap_interval */
+       NULL,                    /* set_video_mode */
+       NULL,                    /* get_video_size */
+       NULL,                    /* get_refresh_rate */
+       NULL,                    /* get_video_output_size */
+       NULL,                    /* get_video_output_prev */
+       NULL,                    /* get_video_output_next */
 #ifdef HAVE_COCOATOUCH
        metal_ctx_get_metrics,
 #else
        NULL,
 #endif
-       NULL, /* translate_aspect */
-       NULL, /* update_title */
-       NULL,
-       NULL, /* set_resize */
-       NULL,
-       NULL,
-       false,
-       NULL,
-       NULL,
-       NULL,
-       NULL, /* image_buffer_init */
-       NULL, /* image_buffer_write */
-       NULL, /* show_mouse */
+       NULL,                    /* translate_aspect */
+       NULL,                    /* update_title */
+       NULL,                    /* check_window */
+       NULL,                    /* set_resize */
+       NULL,                    /* has_focus */
+       NULL,                    /* suppress_screensaver */
+       false,                   /* has_windowed */
+       metal_ctx_swap_buffers,  /* swap_buffers */
+       NULL,                    /* input_driver */
+       NULL,                    /* get_proc_address */
+       NULL,                    /* image_buffer_init */
+       NULL,                    /* image_buffer_write */
+       NULL,                    /* show_mouse */
        "metal",
+       NULL,                    /* get_flags */
+       NULL,                    /* set_flags */
        NULL,
-       NULL,
-       NULL,
-       NULL, /* get_context_data */
-       NULL  /* make_current */
+       NULL,                    /* get_context_data */
+       NULL                     /* make_current */
 };
 
 static bool metal_set_shader(void *data,
@@ -2361,6 +2369,9 @@ static void *metal_init(
    if (md == nil)
       return NULL;
 
+   /* Store reference for context swap_buffers calls */
+   metal_ctx_data = (__bridge void *)md;
+
    metal_fake_context.get_flags = metal_get_flags;
    video_context_driver_set(&metal_fake_context);
 
@@ -2371,21 +2382,58 @@ static void *metal_init(
    return (__bridge_retained void *)md;
 }
 
+/* Flag to prevent recursive shader_subframes calls */
+static bool metal_subframe_lock = false;
+
 static bool metal_frame(void *data, const void *frame,
       unsigned frame_width, unsigned frame_height,
       uint64_t frame_count,
       unsigned pitch, const char *msg,
       video_frame_info_t *video_info)
 {
+   int j;
    MetalDriver *md = (__bridge MetalDriver *)data;
-   return [md renderFrame:frame
-                     data:data
-                    width:frame_width
-                   height:frame_height
-               frameCount:frame_count
-                    pitch:pitch
-                      msg:msg
-                     info:video_info];
+
+   if (![md renderFrame:frame
+                   data:data
+                  width:frame_width
+                 height:frame_height
+             frameCount:frame_count
+                  pitch:pitch
+                    msg:msg
+                   info:video_info])
+      return false;
+
+   /* Call swap_buffers to acquire next drawable. This moves the blocking
+    * acquisition to AFTER presenting (like Vulkan), instead of BEFORE
+    * rendering. This is critical for proper 120Hz on ProMotion displays. */
+   if (metal_fake_context.swap_buffers)
+      metal_fake_context.swap_buffers(NULL);
+
+   /* Frame duping for shader_subframes - present multiple times per core frame
+    * to match high refresh rate displays (e.g., 60fps core on 120Hz display).
+    * This follows the same pattern as the Vulkan driver. */
+   if (      (video_info->shader_subframes > 1)
+         &&  !metal_subframe_lock
+         &&  !video_info->input_driver_nonblock_state
+         &&  !video_info->runloop_is_slowmotion
+         &&  !video_info->runloop_is_paused
+         &&  !(video_info->menu_st_flags & MENU_ST_FLAG_ALIVE))
+   {
+      metal_subframe_lock = true;
+      for (j = 1; j < (int)video_info->shader_subframes; j++)
+      {
+         /* Re-render and present with NULL frame data (reuse previous frame) */
+         if (!metal_frame(data, NULL, 0, 0, frame_count, 0, msg, video_info))
+         {
+            metal_subframe_lock = false;
+            return false;
+         }
+      }
+      metal_subframe_lock = false;
+   }
+
+   return true;
 }
 
 static void metal_set_nonblock_state(void *data, bool non_block,
@@ -2434,6 +2482,7 @@ static bool metal_set_shader(void *data,
 static void metal_free(void *data)
 {
    MetalDriver *md = (__bridge_transfer MetalDriver *)data;
+   metal_ctx_data = NULL;
    md = nil;
 }
 

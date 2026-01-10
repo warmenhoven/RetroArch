@@ -138,16 +138,12 @@ typedef NS_ENUM(NSUInteger, ViewportResetMode) {
 /*! @brief end commits the command buffer */
 - (void)end;
 
+/*! @brief swapBuffers acquires the next drawable, blocking if needed for vsync.
+ *  This should be called after end to match Vulkan's swap_buffers timing. */
+- (void)swapBuffers;
+
 - (void)setRotation:(unsigned)rotation;
 - (bool)readBackBuffer:(uint8_t *)buffer;
-
-#if defined(HAVE_COCOATOUCH)
-/*! @brief Start vsync-driven presentation at display refresh rate */
-- (void)startPresentation;
-
-/*! @brief Stop vsync-driven presentation */
-- (void)stopPresentation;
-#endif
 
 @end
 

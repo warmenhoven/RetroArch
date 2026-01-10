@@ -161,15 +161,6 @@ matrix_float4x4 matrix_proj_ortho(float left, float right, float top, float bott
 
    Uniforms _uniforms;
    Uniforms _uniformsNoRotate;
-
-#if defined(HAVE_COCOATOUCH)
-   /* 120Hz presentation support */
-   CADisplayLink *_presentationLink;
-   id<MTLTexture> _presentationTexture;
-   id<MTLRenderPipelineState> _blitPipelineState;
-   bool _hasNewFrame;
-   bool _presentationActive;
-#endif
 }
 
 - (instancetype)initWithDevice:(id<MTLDevice>)d
@@ -820,20 +811,6 @@ matrix_float4x4 matrix_proj_ortho(float left, float right, float top, float bott
 
    id<CAMetalDrawable> drawable = self.nextDrawable;
 
-#if defined(HAVE_COCOATOUCH)
-   /* When 120Hz presentation is active, copy to presentation texture */
-   if (_presentationActive && drawable)
-   {
-      [self _ensurePresentationTexture];
-      if (_presentationTexture)
-      {
-         id<MTLBlitCommandEncoder> bce = [_commandBuffer blitCommandEncoder];
-         [bce copyFromTexture:drawable.texture toTexture:_presentationTexture];
-         [bce endEncoding];
-      }
-   }
-#endif
-
    if (drawable)
    {
       /* Use addScheduledHandler to present, following Apple's recommendation.
@@ -850,175 +827,25 @@ matrix_float4x4 matrix_proj_ortho(float left, float right, float top, float bott
    [_commandBuffer commit];
 
    _commandBuffer = nil;
-   _drawable = nil;
+   /* Don't clear _drawable here - let swapBuffers handle acquisition timing */
    [self _nextChain];
+}
 
-#if defined(HAVE_COCOATOUCH)
-   _hasNewFrame = YES;
-#endif
+- (void)swapBuffers
+{
+   /* Clear the current drawable reference and acquire the next one.
+    * This matches Vulkan's swap_buffers timing where the blocking
+    * acquisition happens AFTER presenting, not BEFORE rendering.
+    * On 120Hz ProMotion displays, this allows the display link callback
+    * to return faster, improving frame pacing. */
+   _drawable = nil;
+   _drawable = _layer.nextDrawable;
 }
 
 - (bool)allocRange:(BufferRange *)range length:(NSUInteger)length
 {
    return [_chain[_currentChain] allocRange:range length:length];
 }
-
-#if defined(HAVE_COCOATOUCH)
-- (void)_ensurePresentationTexture
-{
-   CGSize size = _layer.drawableSize;
-   if (_presentationTexture &&
-       _presentationTexture.width == (NSUInteger)size.width &&
-       _presentationTexture.height == (NSUInteger)size.height)
-      return;
-
-   MTLTextureDescriptor *desc = [MTLTextureDescriptor
-      texture2DDescriptorWithPixelFormat:_layer.pixelFormat
-                                   width:(NSUInteger)size.width
-                                  height:(NSUInteger)size.height
-                               mipmapped:NO];
-   desc.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
-   desc.storageMode = MTLStorageModePrivate;
-   _presentationTexture = [_device newTextureWithDescriptor:desc];
-   _presentationTexture.label = @"Presentation Texture";
-}
-
-- (void)_ensureBlitPipelineState
-{
-   if (_blitPipelineState)
-      return;
-
-   NSError *err = nil;
-   MTLRenderPipelineDescriptor *psd = [MTLRenderPipelineDescriptor new];
-   psd.label = @"Blit Pipeline";
-
-   MTLVertexDescriptor *vd = [MTLVertexDescriptor new];
-   vd.attributes[0].format = MTLVertexFormatFloat2;
-   vd.attributes[0].offset = offsetof(SpriteVertex, position);
-   vd.attributes[0].bufferIndex = 0;
-   vd.attributes[1].format = MTLVertexFormatFloat2;
-   vd.attributes[1].offset = offsetof(SpriteVertex, texCoord);
-   vd.attributes[1].bufferIndex = 0;
-   vd.layouts[0].stride = sizeof(SpriteVertex);
-   vd.layouts[0].stepFunction = MTLVertexStepFunctionPerVertex;
-
-   psd.vertexDescriptor = vd;
-   psd.vertexFunction = [_library newFunctionWithName:@"stock_vertex"];
-   psd.fragmentFunction = [_library newFunctionWithName:@"stock_fragment"];
-
-   MTLRenderPipelineColorAttachmentDescriptor *ca = psd.colorAttachments[0];
-   ca.pixelFormat = _layer.pixelFormat;
-   ca.blendingEnabled = NO;
-
-   _blitPipelineState = [_device newRenderPipelineStateWithDescriptor:psd error:&err];
-   if (err)
-      RARCH_ERR("[Metal] Failed to create blit pipeline: %s\n",
-                err.localizedDescription.UTF8String);
-}
-
-- (void)_presentFrame:(CADisplayLink *)link
-{
-   if (!_presentationActive)
-      return;
-
-   /* Always try to re-present the presentation texture.
-    * If the Core just presented (hasNewFrame=YES), the presentation texture
-    * has fresh content. If not, we're re-presenting the same frame for 120Hz. */
-   _hasNewFrame = NO;
-
-   /* Ensure we have resources */
-   [self _ensurePresentationTexture];
-   [self _ensureBlitPipelineState];
-
-   if (!_presentationTexture || !_blitPipelineState)
-      return;
-
-   /* Acquire drawable */
-   id<CAMetalDrawable> drawable = [_layer nextDrawable];
-   if (!drawable)
-      return;
-
-   /* Create command buffer for presentation */
-   id<MTLCommandBuffer> cmdBuf = [_commandQueue commandBuffer];
-   cmdBuf.label = @"Presentation";
-
-   /* Blit presentation texture to drawable */
-   MTLRenderPassDescriptor *rpd = [MTLRenderPassDescriptor new];
-   rpd.colorAttachments[0].texture = drawable.texture;
-   rpd.colorAttachments[0].loadAction = MTLLoadActionDontCare;
-   rpd.colorAttachments[0].storeAction = MTLStoreActionStore;
-
-   id<MTLRenderCommandEncoder> rce = [cmdBuf renderCommandEncoderWithDescriptor:rpd];
-   [rce setRenderPipelineState:_blitPipelineState];
-   [rce setFragmentTexture:_presentationTexture atIndex:0];
-   [rce setFragmentSamplerState:_samplers[TEXTURE_FILTER_NEAREST] atIndex:0];
-
-   /* Full-screen quad */
-   SpriteVertex verts[4] = {
-      { .position = {0, 0}, .texCoord = {0, 1} },
-      { .position = {1, 0}, .texCoord = {1, 1} },
-      { .position = {0, 1}, .texCoord = {0, 0} },
-      { .position = {1, 1}, .texCoord = {1, 0} },
-   };
-   [rce setVertexBytes:verts length:sizeof(verts) atIndex:0];
-
-   matrix_float4x4 mvp = matrix_proj_ortho(0, 1, 0, 1);
-   [rce setVertexBytes:&mvp length:sizeof(mvp) atIndex:1];
-
-   MTLViewport vp = {
-      .originX = 0, .originY = 0,
-      .width = drawable.texture.width,
-      .height = drawable.texture.height,
-      .znear = 0, .zfar = 1
-   };
-   [rce setViewport:vp];
-
-   [rce drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];
-   [rce endEncoding];
-
-   /* Present using scheduled handler for better timing */
-   [cmdBuf addScheduledHandler:^(id<MTLCommandBuffer> _Nonnull buffer) {
-      [drawable present];
-   }];
-
-   [cmdBuf commit];
-   _hasNewFrame = NO;
-}
-
-- (void)startPresentation
-{
-   if (_presentationLink)
-      return;
-
-   _presentationActive = YES;
-   _presentationLink = [CADisplayLink displayLinkWithTarget:self
-                                                   selector:@selector(_presentFrame:)];
-
-   /* Request maximum frame rate */
-   if (@available(iOS 15.0, tvOS 15.0, *))
-   {
-      _presentationLink.preferredFrameRateRange = CAFrameRateRangeMake(60, 120, 120);
-   }
-   else
-   {
-      _presentationLink.preferredFramesPerSecond = 120;
-   }
-
-   [_presentationLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
-   RARCH_LOG("[Metal] Started 120Hz presentation\n");
-}
-
-- (void)stopPresentation
-{
-   if (!_presentationLink)
-      return;
-
-   _presentationActive = NO;
-   [_presentationLink invalidate];
-   _presentationLink = nil;
-   RARCH_LOG("[Metal] Stopped 120Hz presentation\n");
-}
-#endif
 
 @end
 
