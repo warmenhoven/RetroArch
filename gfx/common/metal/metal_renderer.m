@@ -161,6 +161,15 @@ matrix_float4x4 matrix_proj_ortho(float left, float right, float top, float bott
 
    Uniforms _uniforms;
    Uniforms _uniformsNoRotate;
+
+#if defined(HAVE_COCOATOUCH)
+   /* 120Hz presentation support */
+   CADisplayLink *_presentationLink;
+   id<MTLTexture> _presentationTexture;
+   id<MTLRenderPipelineState> _blitPipelineState;
+   bool _hasNewFrame;
+   bool _presentationActive;
+#endif
 }
 
 - (instancetype)initWithDevice:(id<MTLDevice>)d
@@ -178,6 +187,9 @@ matrix_float4x4 matrix_proj_ortho(float left, float right, float top, float bott
       _layer.framebufferOnly     = NO;
       _layer.displaySyncEnabled  = YES;
 #endif
+      /* Configure drawable pool for triple-buffering */
+      if (@available(iOS 13.0, macOS 10.15.4, tvOS 13.0, *))
+         _layer.maximumDrawableCount = MAX_INFLIGHT;
       _library                   = l;
       _commandQueue              = [_device newCommandQueue];
       _clearColor                = MTLClearColorMake(0, 0, 0, 1);
@@ -319,6 +331,12 @@ matrix_float4x4 matrix_proj_ortho(float left, float right, float top, float bott
    psd.vertexFunction   = [_library newFunctionWithName:@"stock_vertex"];
    psd.fragmentFunction = [_library newFunctionWithName:@"stock_fragment_color"];
 
+   if (!psd.vertexFunction || !psd.fragmentFunction)
+   {
+      RARCH_ERR("[Metal] Failed to load clear state shader functions.\n");
+      return NO;
+   }
+
    _clearState = [_device newRenderPipelineStateWithDescriptor:psd error:&err];
    if (err != nil)
    {
@@ -348,6 +366,12 @@ matrix_float4x4 matrix_proj_ortho(float left, float right, float top, float bott
    psd.vertexDescriptor = vd;
    psd.vertexFunction   = [_library newFunctionWithName:@"stock_vertex"];
    psd.fragmentFunction = [_library newFunctionWithName:@"stock_fragment"];
+
+   if (!psd.vertexFunction || !psd.fragmentFunction)
+   {
+      RARCH_ERR("[Metal] Failed to load stock shader functions.\n");
+      return NO;
+   }
 
    _states[VIDEO_SHADER_STOCK_BLEND][0] = [_device newRenderPipelineStateWithDescriptor:psd error:&err];
    if (err != nil)
@@ -572,10 +596,22 @@ matrix_float4x4 matrix_proj_ortho(float left, float right, float top, float bott
 
 - (void)convertFormat:(RPixelFormat)fmt from:(id<MTLTexture>)src to:(id<MTLTexture>)dst
 {
-   assert(src.width == dst.width && src.height == dst.height);
-   assert(fmt >= 0 && fmt < RPixelFormatCount);
+   if (src.width != dst.width || src.height != dst.height)
+   {
+      RARCH_ERR("[Metal] convertFormat: texture dimensions mismatch\n");
+      return;
+   }
+   if (fmt < 0 || fmt >= RPixelFormatCount)
+   {
+      RARCH_ERR("[Metal] convertFormat: invalid pixel format %u\n", (unsigned)fmt);
+      return;
+   }
    Filter *conv = _filters[fmt];
-   assert(conv != nil);
+   if (!conv)
+   {
+      RARCH_ERR("[Metal] convertFormat: no filter for format %u\n", (unsigned)fmt);
+      return;
+   }
    [conv apply:self.blitCommandBuffer in:src out:dst];
 }
 
@@ -656,8 +692,19 @@ matrix_float4x4 matrix_proj_ortho(float left, float right, float top, float bott
 
 - (void)begin
 {
-   assert(_commandBuffer == nil);
-   dispatch_semaphore_wait(_inflightSemaphore, DISPATCH_TIME_FOREVER);
+   if (_commandBuffer != nil)
+   {
+      RARCH_WARN("[Metal] begin called with active command buffer - resetting\n");
+      _commandBuffer = nil;
+   }
+
+   /* Don't use semaphore for frame pacing - let nextDrawable handle it.
+    * CAMetalLayer.nextDrawable will block if no drawable is available,
+    * which naturally paces us to the display refresh rate.
+    * Using a semaphore on top of this causes timing mismatches because
+    * the semaphore signals on presentation but the drawable isn't
+    * released until the NEXT vsync. */
+
    _commandBuffer = [_commandQueue commandBuffer];
    _commandBuffer.label = @"Frame command buffer";
    _backBuffer = nil;
@@ -665,15 +712,26 @@ matrix_float4x4 matrix_proj_ortho(float left, float right, float top, float bott
 
 - (id<MTLRenderCommandEncoder>)rce
 {
-   assert(_commandBuffer != nil);
+   if (_commandBuffer == nil)
+   {
+      RARCH_ERR("[Metal] rce called without active command buffer\n");
+      return nil;
+   }
    if (_rce == nil)
    {
+      id<CAMetalDrawable> drawable = self.nextDrawable;
+      if (!drawable || !drawable.texture)
+      {
+         RARCH_WARN("[Metal] Failed to acquire drawable - frame dropped\n");
+         return nil;
+      }
+
       MTLRenderPassDescriptor *rpd = [MTLRenderPassDescriptor new];
       rpd.colorAttachments[0].clearColor = _clearColor;
       rpd.colorAttachments[0].loadAction = MTLLoadActionClear;
-      rpd.colorAttachments[0].texture = self.nextDrawable.texture;
+      rpd.colorAttachments[0].texture = drawable.texture;
       if (_captureEnabled)
-         _backBuffer = self.nextDrawable.texture;
+         _backBuffer = drawable.texture;
       _rce       = [_commandBuffer renderCommandEncoderWithDescriptor:rpd];
       _rce.label = @"Frame command encoder";
    }
@@ -729,7 +787,11 @@ matrix_float4x4 matrix_proj_ortho(float left, float right, float top, float bott
 
 - (void)end
 {
-   assert(_commandBuffer != nil);
+   if (_commandBuffer == nil)
+   {
+      RARCH_WARN("[Metal] end called without active command buffer\n");
+      return;
+   }
 
    [_chain[_currentChain] commitRanges];
 
@@ -743,9 +805,10 @@ matrix_float4x4 matrix_proj_ortho(float left, float right, float top, float bott
          [bce endEncoding];
       }
 #endif
-      /* Pending blits for mipmaps or render passes for slang shaders */
+      /* Pending blits for mipmaps or render passes for slang shaders.
+       * Metal command queues guarantee commit-order execution, so we don't
+       * need to block the CPU waiting for completion. */
       [_blitCommandBuffer commit];
-      [_blitCommandBuffer waitUntilCompleted];
       _blitCommandBuffer = nil;
    }
 
@@ -755,14 +818,33 @@ matrix_float4x4 matrix_proj_ortho(float left, float right, float top, float bott
       _rce = nil;
    }
 
-   __block dispatch_semaphore_t inflight = _inflightSemaphore;
-   [_commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> _) {
-      dispatch_semaphore_signal(inflight);
-   }];
+   id<CAMetalDrawable> drawable = self.nextDrawable;
 
-   if (self.nextDrawable)
+#if defined(HAVE_COCOATOUCH)
+   /* When 120Hz presentation is active, copy to presentation texture */
+   if (_presentationActive && drawable)
    {
-      [_commandBuffer presentDrawable:self.nextDrawable];
+      [self _ensurePresentationTexture];
+      if (_presentationTexture)
+      {
+         id<MTLBlitCommandEncoder> bce = [_commandBuffer blitCommandEncoder];
+         [bce copyFromTexture:drawable.texture toTexture:_presentationTexture];
+         [bce endEncoding];
+      }
+   }
+#endif
+
+   if (drawable)
+   {
+      /* Use addScheduledHandler to present, following Apple's recommendation.
+       * According to Apple (and used by MoltenVK), it is more performant to call
+       * [drawable present] from within a scheduled-handler than to use
+       * [commandBuffer presentDrawable:]. This provides better frame pacing
+       * because presentation is queued when the command buffer is scheduled
+       * (added to GPU queue), not when it completes. */
+      [_commandBuffer addScheduledHandler:^(id<MTLCommandBuffer> _Nonnull buffer) {
+         [drawable present];
+      }];
    }
 
    [_commandBuffer commit];
@@ -770,12 +852,173 @@ matrix_float4x4 matrix_proj_ortho(float left, float right, float top, float bott
    _commandBuffer = nil;
    _drawable = nil;
    [self _nextChain];
+
+#if defined(HAVE_COCOATOUCH)
+   _hasNewFrame = YES;
+#endif
 }
 
 - (bool)allocRange:(BufferRange *)range length:(NSUInteger)length
 {
    return [_chain[_currentChain] allocRange:range length:length];
 }
+
+#if defined(HAVE_COCOATOUCH)
+- (void)_ensurePresentationTexture
+{
+   CGSize size = _layer.drawableSize;
+   if (_presentationTexture &&
+       _presentationTexture.width == (NSUInteger)size.width &&
+       _presentationTexture.height == (NSUInteger)size.height)
+      return;
+
+   MTLTextureDescriptor *desc = [MTLTextureDescriptor
+      texture2DDescriptorWithPixelFormat:_layer.pixelFormat
+                                   width:(NSUInteger)size.width
+                                  height:(NSUInteger)size.height
+                               mipmapped:NO];
+   desc.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+   desc.storageMode = MTLStorageModePrivate;
+   _presentationTexture = [_device newTextureWithDescriptor:desc];
+   _presentationTexture.label = @"Presentation Texture";
+}
+
+- (void)_ensureBlitPipelineState
+{
+   if (_blitPipelineState)
+      return;
+
+   NSError *err = nil;
+   MTLRenderPipelineDescriptor *psd = [MTLRenderPipelineDescriptor new];
+   psd.label = @"Blit Pipeline";
+
+   MTLVertexDescriptor *vd = [MTLVertexDescriptor new];
+   vd.attributes[0].format = MTLVertexFormatFloat2;
+   vd.attributes[0].offset = offsetof(SpriteVertex, position);
+   vd.attributes[0].bufferIndex = 0;
+   vd.attributes[1].format = MTLVertexFormatFloat2;
+   vd.attributes[1].offset = offsetof(SpriteVertex, texCoord);
+   vd.attributes[1].bufferIndex = 0;
+   vd.layouts[0].stride = sizeof(SpriteVertex);
+   vd.layouts[0].stepFunction = MTLVertexStepFunctionPerVertex;
+
+   psd.vertexDescriptor = vd;
+   psd.vertexFunction = [_library newFunctionWithName:@"stock_vertex"];
+   psd.fragmentFunction = [_library newFunctionWithName:@"stock_fragment"];
+
+   MTLRenderPipelineColorAttachmentDescriptor *ca = psd.colorAttachments[0];
+   ca.pixelFormat = _layer.pixelFormat;
+   ca.blendingEnabled = NO;
+
+   _blitPipelineState = [_device newRenderPipelineStateWithDescriptor:psd error:&err];
+   if (err)
+      RARCH_ERR("[Metal] Failed to create blit pipeline: %s\n",
+                err.localizedDescription.UTF8String);
+}
+
+- (void)_presentFrame:(CADisplayLink *)link
+{
+   if (!_presentationActive)
+      return;
+
+   /* Always try to re-present the presentation texture.
+    * If the Core just presented (hasNewFrame=YES), the presentation texture
+    * has fresh content. If not, we're re-presenting the same frame for 120Hz. */
+   _hasNewFrame = NO;
+
+   /* Ensure we have resources */
+   [self _ensurePresentationTexture];
+   [self _ensureBlitPipelineState];
+
+   if (!_presentationTexture || !_blitPipelineState)
+      return;
+
+   /* Acquire drawable */
+   id<CAMetalDrawable> drawable = [_layer nextDrawable];
+   if (!drawable)
+      return;
+
+   /* Create command buffer for presentation */
+   id<MTLCommandBuffer> cmdBuf = [_commandQueue commandBuffer];
+   cmdBuf.label = @"Presentation";
+
+   /* Blit presentation texture to drawable */
+   MTLRenderPassDescriptor *rpd = [MTLRenderPassDescriptor new];
+   rpd.colorAttachments[0].texture = drawable.texture;
+   rpd.colorAttachments[0].loadAction = MTLLoadActionDontCare;
+   rpd.colorAttachments[0].storeAction = MTLStoreActionStore;
+
+   id<MTLRenderCommandEncoder> rce = [cmdBuf renderCommandEncoderWithDescriptor:rpd];
+   [rce setRenderPipelineState:_blitPipelineState];
+   [rce setFragmentTexture:_presentationTexture atIndex:0];
+   [rce setFragmentSamplerState:_samplers[TEXTURE_FILTER_NEAREST] atIndex:0];
+
+   /* Full-screen quad */
+   SpriteVertex verts[4] = {
+      { .position = {0, 0}, .texCoord = {0, 1} },
+      { .position = {1, 0}, .texCoord = {1, 1} },
+      { .position = {0, 1}, .texCoord = {0, 0} },
+      { .position = {1, 1}, .texCoord = {1, 0} },
+   };
+   [rce setVertexBytes:verts length:sizeof(verts) atIndex:0];
+
+   matrix_float4x4 mvp = matrix_proj_ortho(0, 1, 0, 1);
+   [rce setVertexBytes:&mvp length:sizeof(mvp) atIndex:1];
+
+   MTLViewport vp = {
+      .originX = 0, .originY = 0,
+      .width = drawable.texture.width,
+      .height = drawable.texture.height,
+      .znear = 0, .zfar = 1
+   };
+   [rce setViewport:vp];
+
+   [rce drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];
+   [rce endEncoding];
+
+   /* Present using scheduled handler for better timing */
+   [cmdBuf addScheduledHandler:^(id<MTLCommandBuffer> _Nonnull buffer) {
+      [drawable present];
+   }];
+
+   [cmdBuf commit];
+   _hasNewFrame = NO;
+}
+
+- (void)startPresentation
+{
+   if (_presentationLink)
+      return;
+
+   _presentationActive = YES;
+   _presentationLink = [CADisplayLink displayLinkWithTarget:self
+                                                   selector:@selector(_presentFrame:)];
+
+   /* Request maximum frame rate */
+   if (@available(iOS 15.0, tvOS 15.0, *))
+   {
+      _presentationLink.preferredFrameRateRange = CAFrameRateRangeMake(60, 120, 120);
+   }
+   else
+   {
+      _presentationLink.preferredFramesPerSecond = 120;
+   }
+
+   [_presentationLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+   RARCH_LOG("[Metal] Started 120Hz presentation\n");
+}
+
+- (void)stopPresentation
+{
+   if (!_presentationLink)
+      return;
+
+   _presentationActive = NO;
+   [_presentationLink invalidate];
+   _presentationLink = nil;
+   RARCH_LOG("[Metal] Stopped 120Hz presentation\n");
+}
+#endif
 
 @end
 
@@ -981,7 +1224,7 @@ static const NSUInteger kConstantAlignment = 4;
    [self.delegate configure:ce];
 
    MTLSize size  = MTLSizeMake(32, 1, 1);
-   MTLSize count = MTLSizeMake((tin.length + 00) / 32, 1, 1);
+   MTLSize count = MTLSizeMake((tin.length + 31) / 32, 1, 1);
 
    [ce dispatchThreadgroups:count threadsPerThreadgroup:size];
    [ce endEncoding];

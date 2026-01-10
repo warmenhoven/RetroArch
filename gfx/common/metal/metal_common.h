@@ -25,9 +25,8 @@
 
 #include "../../gfx_display.h"
 
-/* TODO/FIXME: implement triple buffering */
-/*! @brief maximum inflight frames */
-#define MAX_INFLIGHT 1
+/*! @brief maximum inflight frames for triple buffering */
+#define MAX_INFLIGHT 3
 #define CHAIN_LENGTH 3
 
 /* macOS requires constants in a buffer to have a 256 byte alignment. */
@@ -141,6 +140,14 @@ typedef NS_ENUM(NSUInteger, ViewportResetMode) {
 
 - (void)setRotation:(unsigned)rotation;
 - (bool)readBackBuffer:(uint8_t *)buffer;
+
+#if defined(HAVE_COCOATOUCH)
+/*! @brief Start vsync-driven presentation at display refresh rate */
+- (void)startPresentation;
+
+/*! @brief Stop vsync-driven presentation */
+- (void)stopPresentation;
+#endif
 
 @end
 

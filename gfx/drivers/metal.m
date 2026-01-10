@@ -199,9 +199,7 @@ gfx_display_ctx_driver_t gfx_display_ctx_metal = {
    Context *_context;
 
    Uniforms _uniforms;
-   id<MTLBuffer> _vert;
-   unsigned _capacity;
-   unsigned _offset;
+   BufferRange _range;
    unsigned _vertices;
 }
 
@@ -212,6 +210,7 @@ gfx_display_ctx_driver_t gfx_display_ctx_metal = {
 
 - (int)getWidthForMessage:(const char *)msg length:(NSUInteger)length scale:(float)scale;
 - (const struct font_glyph *)getGlyph:(uint32_t)code;
+- (bool)getLineMetrics:(struct font_line_metrics **)metrics;
 @end
 
 @implementation MetalRaster
@@ -278,9 +277,6 @@ gfx_display_ctx_driver_t gfx_display_ctx_metal = {
 
       _texture  = [_buffer newTextureWithDescriptor:td offset:0 bytesPerRow:_stride];
 
-      _capacity = 12000;
-      _vert     = [_context.device newBufferWithLength:sizeof(SpriteVertex) *
-               _capacity options:PLATFORM_METAL_RESOURCE_STORAGE_MODE];
       if (![self _initializeState])
          return nil;
    }
@@ -317,6 +313,9 @@ gfx_display_ctx_driver_t gfx_display_ctx_metal = {
       psd.vertexDescriptor           = vd;
       psd.vertexFunction             = [_context.library newFunctionWithName:@"sprite_vertex"];
       psd.fragmentFunction           = [_context.library newFunctionWithName:@"sprite_fragment_a8"];
+
+      if (!psd.vertexFunction || !psd.fragmentFunction)
+         return NO;
 
       _state                         = [_context.device newRenderPipelineStateWithDescriptor:psd error:&err];
       if (err != nil)
@@ -377,10 +376,20 @@ gfx_display_ctx_driver_t gfx_display_ctx_metal = {
 
 - (const struct font_glyph *)getGlyph:(uint32_t)code
 {
-   const struct font_glyph *glyph = _font_driver->get_glyph((void *)_font_driver, code);
+   const struct font_glyph *glyph = _font_driver->get_glyph(_font_data, code);
    if (glyph)
       [self updateGlyph:glyph];
    return glyph;
+}
+
+- (bool)getLineMetrics:(struct font_line_metrics **)metrics
+{
+   if (_font_driver && _font_data)
+   {
+      _font_driver->get_line_metrics(_font_data, metrics);
+      return true;
+   }
+   return false;
 }
 
 static INLINE void write_quad6(SpriteVertex *pv,
@@ -443,8 +452,8 @@ static INLINE void write_quad6(SpriteVertex *pv,
          break;
    }
 
-   SpriteVertex *v = (SpriteVertex *)_vert.contents;
-   v              += _offset + _vertices;
+   SpriteVertex *v = (SpriteVertex *)_range.data;
+   v              += _vertices;
    glyph_q         = _font_driver->get_glyph(_font_data, '?');
 
    while (msg < msg_end)
@@ -488,10 +497,8 @@ static INLINE void write_quad6(SpriteVertex *pv,
 
 - (void)_flush
 {
-   NSUInteger start = _offset * sizeof(SpriteVertex);
-#if !defined(HAVE_COCOATOUCH)
-   [_vert didModifyRange:NSMakeRange(start, sizeof(SpriteVertex) * _vertices)];
-#endif
+   if (_vertices == 0)
+      return;
 
    id<MTLRenderCommandEncoder> rce = _context.rce;
    [rce pushDebugGroup:@"render fonts"];
@@ -499,13 +506,12 @@ static INLINE void write_quad6(SpriteVertex *pv,
    [_context resetRenderViewport:kFullscreenViewport];
    [rce setRenderPipelineState:_state];
    [rce setVertexBytes:&_uniforms length:sizeof(Uniforms) atIndex:BufferIndexUniforms];
-   [rce setVertexBuffer:_vert offset:start atIndex:BufferIndexPositions];
+   [rce setVertexBuffer:_range.buffer offset:_range.offset atIndex:BufferIndexPositions];
    [rce setFragmentTexture:_texture atIndex:TextureIndexColor];
    [rce setFragmentSamplerState:_sampler atIndex:SamplerIndexDraw];
    [rce drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:_vertices];
    [rce popDebugGroup];
 
-   _offset += _vertices;
    _vertices = 0;
 }
 
@@ -603,12 +609,15 @@ static INLINE void write_quad6(SpriteVertex *pv,
 
    @autoreleasepool
    {
-      size_t max_glyphs        = strlen(msg);
+      size_t max_glyphs = strlen(msg);
       if (drop_x || drop_y)
          max_glyphs *= 2;
 
-      if (max_glyphs * 6 + _offset > _capacity)
-         _offset = 0;
+      NSUInteger needed = max_glyphs * 6 * sizeof(SpriteVertex);
+      if (![_context allocRange:&_range length:needed])
+         return;
+
+      _vertices = 0;
 
       if (drop_x || drop_y)
       {
@@ -688,6 +697,15 @@ static const struct font_glyph *metal_raster_font_get_glyph(
    return [r getGlyph:code];
 }
 
+static bool metal_get_line_metrics(void *data,
+      struct font_line_metrics **metrics)
+{
+   MetalRaster *r = (__bridge MetalRaster *)data;
+   if (r)
+      return [r getLineMetrics:metrics];
+   return false;
+}
+
 font_renderer_t metal_raster_font = {
    metal_raster_font_init,
    metal_raster_font_free,
@@ -697,7 +715,7 @@ font_renderer_t metal_raster_font = {
    NULL, /* bind_block  */
    NULL, /* flush_block */
    metal_raster_font_get_message_width,
-   NULL  /* get_line_metrics */
+   metal_get_line_metrics
 };
 
 /*
@@ -832,12 +850,20 @@ font_renderer_t metal_raster_font = {
             false,
             video->is_threaded,
             FONT_DRIVER_RENDER_METAL_API);
+
+#if defined(HAVE_COCOATOUCH)
+      /* Start 120Hz presentation on ProMotion displays */
+      [_context startPresentation];
+#endif
    }
    return self;
 }
 
 - (void)dealloc
 {
+#if defined(HAVE_COCOATOUCH)
+   [_context stopPresentation];
+#endif
    if (_viewport)
    {
       free(_viewport);
@@ -880,6 +906,11 @@ font_renderer_t metal_raster_font = {
       psd.vertexFunction             = [_library newFunctionWithName:@"basic_vertex_proj_tex"];
       psd.fragmentFunction           = [_library newFunctionWithName:@"basic_fragment_proj_tex"];
 
+      if (!psd.vertexFunction || !psd.fragmentFunction)
+      {
+         RARCH_ERR("[Metal] Failed to load main pipeline shader functions.\n");
+         return NO;
+      }
 
       _t_pipelineState = [_device newRenderPipelineStateWithDescriptor:psd error:&err];
       if (err != nil)
@@ -963,12 +994,17 @@ font_renderer_t metal_raster_font = {
       }
 #endif
 
-      if (statistics_show)
+      /* Only show statistics when menu is not visible and content is running */
+      if (statistics_show && frame && width && height)
       {
-         struct font_params *osd_params = (struct font_params *)&video_info->osd_stat_params;
+         bool menu_is_alive = (video_info->menu_st_flags & MENU_ST_FLAG_ALIVE) ? true : false;
+         if (!menu_is_alive)
+         {
+            struct font_params *osd_params = (struct font_params *)&video_info->osd_stat_params;
 
-         if (osd_params)
-            font_driver_render_msg(data, video_info->stat_text, osd_params, NULL);
+            if (osd_params)
+               font_driver_render_msg(data, video_info->stat_text, osd_params, NULL);
+         }
       }
 
 #ifdef HAVE_GFX_WIDGETS
@@ -2028,6 +2064,13 @@ typedef struct MTLALIGN(16)
    return YES;
 }
 
+- (void)clearShader
+{
+   [self _freeVideoShader:_shader];
+   _shader = nil;
+   RARCH_LOG("[Metal] Shader cleared, using stock.\n");
+}
+
 @end
 
 @implementation Overlay
@@ -2375,9 +2418,11 @@ static bool metal_set_shader(void *data,
          path = NULL;
       }
 
-      /* TODO/FIXME - actually return to stock shader */
       if (string_is_empty(path))
+      {
+         [md.frameView clearShader];
          return true;
+      }
 
       if ([md.frameView setShaderFromPath:[NSString stringWithUTF8String:path]])
          return true;
@@ -2451,8 +2496,29 @@ static void metal_set_video_mode(void *data,
              fullscreen ? "YES" : "NO");
 }
 
-/* TODO/FIXME - implement */
-static float metal_get_refresh_rate(void *data) { return 0.0f; }
+static float metal_get_refresh_rate(void *data)
+{
+#ifdef OSX
+   CGDirectDisplayID mainDisplayID = CGMainDisplayID();
+   CGDisplayModeRef currentMode = CGDisplayCopyDisplayMode(mainDisplayID);
+   double currentRate = CGDisplayModeGetRefreshRate(currentMode);
+   CFRelease(currentMode);
+   return currentRate;
+#else
+   CADisplayLink *displayLink = [CocoaView get].displayLink;
+   if (displayLink)
+   {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 150000 || __TV_OS_VERSION_MAX_ALLOWED >= 150000
+      if (@available(iOS 15.0, tvOS 15.0, *))
+         return displayLink.preferredFrameRateRange.preferred;
+#endif
+      return displayLink.preferredFramesPerSecond;
+   }
+   if (@available(iOS 10.3, tvOS 10.2, *))
+      return [UIScreen mainScreen].maximumFramesPerSecond;
+   return 60.0f;
+#endif
+}
 
 static void metal_set_filtering(void *data, unsigned index, bool smooth, bool ctx_scaling)
 {
@@ -2479,8 +2545,12 @@ static void metal_set_texture_frame(void *data, const void *frame,
       float alpha)
 {
    MetalDriver *md         = (__bridge MetalDriver *)data;
-   settings_t *settings    = config_get_ptr();
-   bool menu_linear_filter = settings->bools.menu_linear_filter;
+   settings_t *settings;
+   bool menu_linear_filter;
+   if (!md)
+      return;
+   settings                = config_get_ptr();
+   menu_linear_filter      = settings->bools.menu_linear_filter;
 
    [md.menu updateWidth:width
                  height:height
