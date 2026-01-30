@@ -7,7 +7,6 @@ echo "Shell: $SHELL"
 echo ""
 
 DEVNAME="${1:-iPhone}"
-SCHEME="RetroArch iOS Release"
 WORKSPACE="RetroArch.xcworkspace"
 BUNDLE_ID="org.warmenhoven.RetroArch"
 CONFIG="Release"
@@ -42,8 +41,8 @@ DEVNAME_SPACE=$(echo "$DEVNAME" | tr '-' ' ')
 # Remove both straight (') and curly (') apostrophes - use sed for curly since tr can't handle multi-byte UTF-8
 DEVNAME_NO_APOS=$(echo "$DEVNAME" | sed $'s/\xe2\x80\x99//g' | tr -d "'")
 DEVNAME_SPACE_NO_APOS=$(echo "$DEVNAME_SPACE" | sed $'s/\xe2\x80\x99//g' | tr -d "'")
-# Normalize curly apostrophes to straight in the output, then match against all variants
-UDID=$(echo "$RAW_OUTPUT" | sed $'s/\xe2\x80\x99/\x27/g' | grep -iE "($DEVNAME|$DEVNAME_SPACE|$DEVNAME_NO_APOS|$DEVNAME_SPACE_NO_APOS)" | grep -v Simulator | sed -n 's/.*(\([^)]*\))$/\1/p' | head -1)
+# Normalize curly apostrophes to straight, then remove all apostrophes from output for matching
+UDID=$(echo "$RAW_OUTPUT" | sed $'s/\xe2\x80\x99/\x27/g' | tr -d "'" | grep -iE "($DEVNAME|$DEVNAME_SPACE|$DEVNAME_NO_APOS|$DEVNAME_SPACE_NO_APOS)" | grep -v Simulator | sed -n 's/.*(\([^)]*\))$/\1/p' | head -1)
 
 # If xctrace didn't work, try devicectl as backup
 if [ -z "$UDID" ]; then
@@ -53,7 +52,7 @@ if [ -z "$UDID" ]; then
     echo "$DEVICECTL_OUTPUT" | head -5
 
     # Try to get UDID from devicectl (handle both space and dash versions, and apostrophe variants)
-    DEVICE_LINE=$(echo "$DEVICECTL_OUTPUT" | sed $'s/\xe2\x80\x99/\x27/g' | grep -iE "($DEVNAME|$DEVNAME_SPACE|$DEVNAME_NO_APOS|$DEVNAME_SPACE_NO_APOS)" | grep -v Simulator | head -1)
+    DEVICE_LINE=$(echo "$DEVICECTL_OUTPUT" | sed $'s/\xe2\x80\x99/\x27/g' | tr -d "'" | grep -iE "($DEVNAME|$DEVNAME_SPACE|$DEVNAME_NO_APOS|$DEVNAME_SPACE_NO_APOS)" | grep -v Simulator | head -1)
     if [ -n "$DEVICE_LINE" ]; then
         # Extract identifier in UUID format (8-4-4-4-12 hex digits)
         UDID=$(echo "$DEVICE_LINE" | grep -oE '[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}')
@@ -61,22 +60,23 @@ if [ -z "$UDID" ]; then
     fi
 fi
 
-# Final fallback: use xcodebuild's available destinations to find the correct UDID
-if [ -n "$UDID" ]; then
-    # Check if the UDID we found works with xcodebuild
-    if ! $XCRUN xcodebuild -showdestinations -workspace "$WORKSPACE" -scheme "$SCHEME" 2>&1 | grep -q "$UDID"; then
-        echo "UDID from devicectl ($UDID) not compatible with xcodebuild, searching destinations..."
-        
-        # Try to find device in xcodebuild destinations (handle both space and dash versions, and apostrophe variants)
-        XCODE_UDID=$($XCRUN xcodebuild -showdestinations -workspace "$WORKSPACE" -scheme "$SCHEME" 2>&1 | sed $'s/\xe2\x80\x99/\x27/g' | grep -iE "platform:iOS.*(name:$DEVNAME|name:$DEVNAME_SPACE|name:$DEVNAME_NO_APOS|name:$DEVNAME_SPACE_NO_APOS)" | grep -v Simulator | sed -n 's/.*id:\([^,]*\).*/\1/p' | head -1)
+# If xctrace and devicectl both failed, try xcodebuild destinations as final fallback
+if [ -z "$UDID" ]; then
+    echo "xctrace and devicectl didn't find device, trying xcodebuild destinations..."
 
+    # Try iOS scheme first
+    XCODE_UDID=$($XCRUN xcodebuild -showdestinations -workspace "$WORKSPACE" -scheme "RetroArch iOS Release" 2>&1 | sed $'s/\xe2\x80\x99/\x27/g' | tr -d "'" | grep -iE "platform:iOS.*(name:$DEVNAME|name:$DEVNAME_SPACE|name:$DEVNAME_NO_APOS|name:$DEVNAME_SPACE_NO_APOS)" | grep -v Simulator | sed -n 's/.*id:\([^,]*\).*/\1/p' | head -1)
+    if [ -n "$XCODE_UDID" ]; then
+        echo "Found $DEVNAME in iOS destinations: $XCODE_UDID"
+        UDID="$XCODE_UDID"
+        DETECTED_PLATFORM="iOS"
+    else
+        # Try tvOS scheme
+        XCODE_UDID=$($XCRUN xcodebuild -showdestinations -workspace "$WORKSPACE" -scheme "RetroArch tvOS Release" 2>&1 | sed $'s/\xe2\x80\x99/\x27/g' | tr -d "'" | grep -iE "platform:tvOS.*(name:$DEVNAME|name:$DEVNAME_SPACE|name:$DEVNAME_NO_APOS|name:$DEVNAME_SPACE_NO_APOS)" | grep -v Simulator | sed -n 's/.*id:\([^,]*\).*/\1/p' | head -1)
         if [ -n "$XCODE_UDID" ]; then
-            echo "Found $DEVNAME UDID from xcodebuild destinations: $XCODE_UDID"
+            echo "Found $DEVNAME in tvOS destinations: $XCODE_UDID"
             UDID="$XCODE_UDID"
-        else
-            echo "Could not find $DEVNAME in xcodebuild destinations"
-            echo "Available iOS devices:"
-            $XCRUN xcodebuild -showdestinations -workspace "$WORKSPACE" -scheme "$SCHEME" 2>&1 | grep -E "platform:iOS.*arch:arm64" | grep -v Simulator
+            DETECTED_PLATFORM="tvOS"
         fi
     fi
 fi
@@ -85,8 +85,51 @@ fi
 
 echo "Found device: $DEVNAME with UDID: $UDID"
 
+# Detect platform from device info (can be overridden with PLATFORM env var)
+if [ -n "$PLATFORM" ]; then
+    echo "Using platform override: $PLATFORM"
+elif [ -n "$DETECTED_PLATFORM" ]; then
+    # Platform was detected by xcodebuild fallback
+    PLATFORM="$DETECTED_PLATFORM"
+    echo "Detected platform (from xcodebuild): $PLATFORM"
+else
+    # Query devicectl to get device model and detect platform (search by name since UDID formats differ)
+    DEVICE_INFO=$($XCRUN devicectl list devices 2>/dev/null | sed $'s/\xe2\x80\x99/\x27/g' | tr -d "'" | grep -iE "($DEVNAME|$DEVNAME_SPACE|$DEVNAME_NO_APOS|$DEVNAME_SPACE_NO_APOS)" | grep -v Simulator | head -1)
+    if echo "$DEVICE_INFO" | grep -q "Apple TV"; then
+        PLATFORM="tvOS"
+    else
+        PLATFORM="iOS"
+    fi
+    echo "Detected platform: $PLATFORM"
+fi
+
+# Set scheme, build products path suffix, and app name based on platform
+if [ "$PLATFORM" = "tvOS" ]; then
+    SCHEME="RetroArch tvOS Release"
+    PRODUCTS_SUFFIX="appletvos"
+    APP_NAME="RetroArchTV.app"
+else
+    SCHEME="RetroArch iOS Release"
+    PRODUCTS_SUFFIX="iphoneos"
+    APP_NAME="RetroArch.app"
+fi
+
+echo "Using scheme: $SCHEME"
+
+# Verify UDID works with xcodebuild, correct it if needed (devicectl and xcodebuild use different ID formats)
+if ! $XCRUN xcodebuild -showdestinations -workspace "$WORKSPACE" -scheme "$SCHEME" 2>&1 | grep -q "$UDID"; then
+    echo "UDID $UDID not recognized by xcodebuild, searching destinations..."
+    XCODE_UDID=$($XCRUN xcodebuild -showdestinations -workspace "$WORKSPACE" -scheme "$SCHEME" 2>&1 | sed $'s/\xe2\x80\x99/\x27/g' | tr -d "'" | grep -iE "platform:$PLATFORM.*(name:$DEVNAME|name:$DEVNAME_SPACE|name:$DEVNAME_NO_APOS|name:$DEVNAME_SPACE_NO_APOS)" | grep -v Simulator | sed -n 's/.*id:\([^,]*\).*/\1/p' | head -1)
+    if [ -n "$XCODE_UDID" ]; then
+        echo "Found correct UDID from xcodebuild: $XCODE_UDID"
+        UDID="$XCODE_UDID"
+    else
+        echo "Warning: Could not find device in xcodebuild destinations"
+    fi
+fi
+
 # Check if device is available for wireless deployment
-DEVICE_STATUS=$($XCRUN devicectl list devices 2>/dev/null | sed $'s/\xe2\x80\x99/\x27/g' | grep -iE "($DEVNAME|$DEVNAME_SPACE|$DEVNAME_NO_APOS|$DEVNAME_SPACE_NO_APOS)" | grep -v Simulator | head -1)
+DEVICE_STATUS=$($XCRUN devicectl list devices 2>/dev/null | sed $'s/\xe2\x80\x99/\x27/g' | tr -d "'" | grep -iE "($DEVNAME|$DEVNAME_SPACE|$DEVNAME_NO_APOS|$DEVNAME_SPACE_NO_APOS)" | grep -v Simulator | head -1)
 if echo "$DEVICE_STATUS" | grep -qE "(available \(paired\)|connected)"; then
     echo "✓ Device is connected and ready for deployment"
 elif echo "$DEVICE_STATUS" | grep -q "unavailable"; then
@@ -115,16 +158,16 @@ if [ -z "$DERIVED_DATA_PATH" ]; then
     echo "Warning: Could not determine DerivedData path, using local ./Derived"
     DERIVED_DATA_PATH="./Derived"
     DERIVED_DATA_ARG="-derivedDataPath $DERIVED_DATA_PATH"
-    APP_PATH="./Derived/Build/Products/${CONFIG}-iphoneos/RetroArch.app"
+    APP_PATH="./Derived/Build/Products/${CONFIG}-${PRODUCTS_SUFFIX}/${APP_NAME}"
 else
     echo "Using shared DerivedData path: $DERIVED_DATA_PATH"
     # Don't specify -derivedDataPath to use Xcode's default (for sharing with Xcode GUI)
     DERIVED_DATA_ARG=""
-    APP_PATH="${DERIVED_DATA_PATH}/Build/Products/${CONFIG}-iphoneos/RetroArch.app"
+    APP_PATH="${DERIVED_DATA_PATH}/Build/Products/${CONFIG}-${PRODUCTS_SUFFIX}/${APP_NAME}"
 fi
 
 echo "Building for incremental builds (shared with Xcode)..."
-echo "Command: xcodebuild -workspace $WORKSPACE -scheme \"$SCHEME\" -configuration $CONFIG -destination \"platform=iOS,id=$UDID\" $DERIVED_DATA_ARG build"
+echo "Command: xcodebuild -workspace $WORKSPACE -scheme \"$SCHEME\" -configuration $CONFIG -destination \"platform=$PLATFORM,id=$UDID\" $DERIVED_DATA_ARG build"
 
 # Build the app
 echo "Starting build at: $(date)"
@@ -171,7 +214,7 @@ stdbuf -o0 xcodebuild \
     -workspace "$WORKSPACE" \
     -scheme "$SCHEME" \
     -configuration "$CONFIG" \
-    -destination "platform=iOS,id=$UDID" \
+    -destination "platform=$PLATFORM,id=$UDID" \
     $DERIVED_DATA_ARG \
     -skipPackagePluginValidation \
     -skipMacroValidation \
