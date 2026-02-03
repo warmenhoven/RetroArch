@@ -21,6 +21,11 @@
 #include <sys/resource.h>
 #endif
 
+#if defined(__APPLE__)
+#include <mach/mach.h>
+#include <mach/thread_info.h>
+#endif
+
 #include <retro_inline.h>
 #include <string/stdstring.h>
 #include <retro_math.h>
@@ -3815,6 +3820,10 @@ void video_driver_frame(const void *data, unsigned width,
    static retro_time_t last_cpu_wall_time;
    static float last_cpu_percent;
 #endif
+#if defined(__APPLE__)
+   static uint64_t last_main_thread_cpu_time;
+   static float last_main_thread_cpu_percent;
+#endif
    /* Mark the start of nonblock state for
     * ignoring initial previous frame time */
    static int8_t nonblock_active;
@@ -3991,7 +4000,23 @@ void video_driver_frame(const void *data, unsigned width,
                sizeof(status_text) - _len,
                "%6.2f", last_fps);
 
-#if defined(__APPLE__) || defined(__unix__)
+#if defined(__APPLE__)
+         /* Show main thread CPU / total CPU on macOS */
+         status_text[  _len] = ' ';
+         status_text[++_len] = '|';
+         status_text[++_len] = '|';
+         status_text[++_len] = ' ';
+         status_text[++_len] = 'C';
+         status_text[++_len] = 'P';
+         status_text[++_len] = 'U';
+         status_text[++_len] = ':';
+         status_text[++_len] = ' ';
+         status_text[++_len] = '\0';
+         _len               += snprintf(
+               status_text         + _len,
+               sizeof(status_text) - _len,
+               "%4.1f/%4.1f%%", last_main_thread_cpu_percent, last_cpu_percent);
+#elif defined(__unix__)
          status_text[  _len] = ' ';
          status_text[++_len] = '|';
          status_text[++_len] = '|';
@@ -4072,23 +4097,48 @@ void video_driver_frame(const void *data, unsigned width,
                fps_update_interval);
 
 #if defined(__APPLE__) || defined(__unix__)
-         /* Update CPU usage percentage */
+         /* Update CPU usage percentage (total process and main thread on macOS) */
          {
             struct rusage usage;
             if (getrusage(RUSAGE_SELF, &usage) == 0)
             {
                struct timeval cpu_time;
+               int64_t wall_delta = 0;
                timeradd(&usage.ru_utime, &usage.ru_stime, &cpu_time);
 
                if (last_cpu_wall_time > 0)
                {
                   int64_t cpu_delta  = (cpu_time.tv_sec - last_cpu_time.tv_sec) * 1000000
                                      + (cpu_time.tv_usec - last_cpu_time.tv_usec);
-                  int64_t wall_delta = new_time - last_cpu_wall_time;
+                  wall_delta = new_time - last_cpu_wall_time;
 
                   if (wall_delta > 0)
                      last_cpu_percent = (float)cpu_delta / (float)wall_delta * 100.0f;
                }
+
+#if defined(__APPLE__)
+               /* Update main thread CPU usage percentage */
+               {
+                  mach_port_t thread_port = mach_thread_self();
+                  thread_basic_info_data_t info;
+                  mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+                  if (thread_info(thread_port, THREAD_BASIC_INFO,
+                                 (thread_info_t)&info, &count) == KERN_SUCCESS)
+                  {
+                     uint64_t thread_cpu_time = (uint64_t)info.user_time.seconds * 1000000
+                                              + info.user_time.microseconds
+                                              + (uint64_t)info.system_time.seconds * 1000000
+                                              + info.system_time.microseconds;
+                     if (last_main_thread_cpu_time > 0 && wall_delta > 0)
+                     {
+                        int64_t cpu_delta = thread_cpu_time - last_main_thread_cpu_time;
+                        last_main_thread_cpu_percent = (float)cpu_delta / (float)wall_delta * 100.0f;
+                     }
+                     last_main_thread_cpu_time = thread_cpu_time;
+                  }
+                  mach_port_deallocate(mach_task_self(), thread_port);
+               }
+#endif
                last_cpu_time      = cpu_time;
                last_cpu_wall_time = new_time;
             }
