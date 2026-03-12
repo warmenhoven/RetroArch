@@ -49,6 +49,7 @@
 
 #include "../menu_driver.h"
 #include "../menu_cbs.h"
+#include "../menu_displaylist.h"
 #include "../menu_entries.h"
 #include "../menu_setting.h"
 #if defined(HAVE_CG) || defined(HAVE_GLSL) || defined(HAVE_SLANG) || defined(HAVE_HLSL)
@@ -2565,6 +2566,42 @@ DEFAULT_ACTION_OK_SET(action_ok_set_path_audiofilter, ACTION_OK_SET_PATH_AUDIO_F
 DEFAULT_ACTION_OK_SET(action_ok_set_path_videofilter, ACTION_OK_SET_PATH_VIDEO_FILTER, MSG_UNKNOWN)
 DEFAULT_ACTION_OK_SET(action_ok_set_path_overlay,     ACTION_OK_SET_PATH_OVERLAY,      MSG_UNKNOWN)
 DEFAULT_ACTION_OK_SET(action_ok_set_path_osk_overlay, ACTION_OK_SET_PATH_OSK_OVERLAY,  MSG_UNKNOWN)
+
+#ifdef HAVE_COMPRESSION
+static int action_ok_set_path_overlay_carchive(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   char action_path[PATH_MAX_LENGTH];
+   const char *menu_path  = NULL;
+   const char *flush_char = msg_hash_to_str(
+         MENU_ENUM_LABEL_DEFERRED_ONSCREEN_OVERLAY_SETTINGS_LIST);
+   rarch_setting_t *setting;
+
+   menu_entries_get_last_stack(&menu_path, NULL, NULL, NULL, NULL);
+
+   if (!string_is_empty(path))
+      fill_pathname_join_delim(action_path, menu_path, path,
+            '#', sizeof(action_path));
+   else
+      strlcpy(action_path, menu_path, sizeof(action_path));
+
+   retroarch_override_setting_set(
+         RARCH_OVERRIDE_SETTING_OVERLAY_PRESET, NULL);
+
+   setting = menu_setting_find_enum(MENU_ENUM_LABEL_OVERLAY_PRESET);
+   if (setting)
+   {
+      if (setting->value.target.string)
+         strlcpy(setting->value.target.string,
+               action_path, setting->size);
+      if (setting->change_handler)
+         setting->change_handler(setting);
+   }
+
+   menu_entries_flush_stack(flush_char, 0);
+   return 0;
+}
+#endif
 DEFAULT_ACTION_OK_SET(action_ok_set_path_video_font,  ACTION_OK_SET_PATH_VIDEO_FONT,   MSG_UNKNOWN)
 DEFAULT_ACTION_OK_SET(action_ok_set_path,             ACTION_OK_SET_PATH,              MSG_UNKNOWN)
 DEFAULT_ACTION_OK_SET(action_ok_load_core,            ACTION_OK_LOAD_CORE,             MSG_UNKNOWN)
@@ -9999,6 +10036,14 @@ static int menu_cbs_init_bind_ok_compare_type(menu_file_list_cbs_t *cbs,
             BIND_ACTION_OK(cbs, action_ok_set_path_audiofilter);
             break;
          case FILE_TYPE_IN_CARCHIVE:
+#ifdef HAVE_COMPRESSION
+            if (filebrowser_get_type() == FILEBROWSER_SELECT_OVERLAY)
+            {
+               BIND_ACTION_OK(cbs, action_ok_set_path_overlay_carchive);
+               break;
+            }
+#endif
+            /* fall through */
          case FILE_TYPE_PLAIN:
             if (filebrowser_get_type() == FILEBROWSER_SCAN_FILE)
             {

@@ -15770,6 +15770,7 @@ bool menu_displaylist_ctl(enum menu_displaylist_ctl_state type,
                case DISPLAYLIST_OVERLAYS:
                   info->type_default = FILE_TYPE_OVERLAY;
                   info->exts         = strldup("cfg", sizeof("cfg"));
+                  filebrowser_set_type(FILEBROWSER_SELECT_OVERLAY);
                   break;
                case DISPLAYLIST_OSK_OVERLAYS:
                   info->type_default = FILE_TYPE_OSK_OVERLAY;

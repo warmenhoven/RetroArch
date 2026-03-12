@@ -20,6 +20,10 @@
 #include <retro_miscellaneous.h>
 #include <file/file_path.h>
 #include <file/config_file.h>
+#ifdef HAVE_COMPRESSION
+#include <file/archive_file.h>
+#endif
+#include <formats/image.h>
 #include <streams/file_stream.h>
 #include <string/stdstring.h>
 #include <lrc_hash.h>
@@ -55,6 +59,44 @@ struct overlay_loader
    uint8_t flags;
 };
 
+/* Resolve a relative image path against the overlay config path.
+ * When the config is inside an archive (e.g. overlays.zip#dir/cfg),
+ * the image path is resolved within the same archive. */
+static void overlay_resolve_path(char *s,
+      const char *overlay_path,
+      const char *rel_path, size_t len)
+{
+#ifdef HAVE_COMPRESSION
+   const char *delim = path_get_archive_delim(overlay_path);
+   if (delim)
+   {
+      size_t archive_len = (size_t)(delim + 1 - overlay_path);
+      const char *inner  = delim + 1;
+      const char *slash  = strrchr(inner, '/');
+
+      /* Copy archive path including '#' */
+      strlcpy(s, overlay_path, len);
+      if (archive_len < len)
+      {
+         size_t _len = archive_len;
+         /* Copy inner directory if present */
+         if (slash)
+         {
+            size_t dir_len = (size_t)(slash - inner + 1);
+            if (_len + dir_len < len)
+            {
+               memcpy(s + _len, inner, dir_len);
+               _len += dir_len;
+            }
+         }
+         strlcpy(s + _len, rel_path, len - _len);
+      }
+      return;
+   }
+#endif
+   fill_pathname_resolve_relative(s, overlay_path, rel_path, len);
+}
+
 static void task_overlay_image_done(struct overlay *overlay)
 {
    overlay->pos           = 0;
@@ -80,6 +122,26 @@ static bool task_overlay_load_image_texture(
       image->supports_rgba =
             (loader->flags & OVERLAY_LOADER_RGBA_SUPPORT) ? true : false;
 
+#ifdef HAVE_COMPRESSION
+      if (path_get_archive_delim(full_path))
+      {
+         void *buf       = NULL;
+         int64_t buf_len = 0;
+         enum image_type_enum img_type;
+         if (file_archive_compressed_read(
+                  full_path, &buf, NULL, &buf_len) != 1)
+            return false;
+         img_type = image_texture_get_type(full_path);
+         if (!image_texture_load_buffer(
+                  image, img_type, buf, (size_t)buf_len))
+         {
+            free(buf);
+            return false;
+         }
+         free(buf);
+      }
+      else
+#endif
       if (!image_texture_load(image, full_path))
          return false;
 
@@ -114,7 +176,7 @@ static void task_overlay_load_desc_image(
             image_path, sizeof(image_path)))
    {
       char path[PATH_MAX_LENGTH];
-      fill_pathname_resolve_relative(path, loader->overlay_path,
+      overlay_resolve_path(path, loader->overlay_path,
             image_path, sizeof(path));
 
       if (task_overlay_load_image_texture(loader, overlay, &desc->image,
@@ -826,7 +888,7 @@ static void task_overlay_deferred_load(retro_task_t *task)
 
          overlay_resolved_path[0] = '\0';
 
-         fill_pathname_resolve_relative(overlay_resolved_path,
+         overlay_resolve_path(overlay_resolved_path,
                loader->overlay_path,
                overlay->config.paths.path, sizeof(overlay_resolved_path));
 
@@ -1157,7 +1219,37 @@ bool task_push_overlay_load_default(
       return false;
    }
 
-   if (!(conf = config_file_new_from_path_to_string(overlay_path)))
+#ifdef HAVE_COMPRESSION
+   if (path_get_archive_delim(overlay_path))
+   {
+      void *buf       = NULL;
+      int64_t buf_len = 0;
+      if (file_archive_compressed_read(
+               overlay_path, &buf, NULL, &buf_len) != 1)
+      {
+         free(loader);
+         free(image_list);
+         return false;
+      }
+      {
+         char *str = (char*)realloc(buf, (size_t)(buf_len + 1));
+         if (!str)
+         {
+            free(buf);
+            free(loader);
+            free(image_list);
+            return false;
+         }
+         str[buf_len] = '\0';
+         conf = config_file_new_from_string(str, overlay_path);
+         free(str);
+      }
+   }
+   else
+#endif
+   conf = config_file_new_from_path_to_string(overlay_path);
+
+   if (!conf)
    {
       free(loader);
       free(image_list);
