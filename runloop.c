@@ -238,6 +238,52 @@
 
 #if TARGET_OS_IPHONE
 #include "JITSupport.h"
+#define EXEC_MEM_MAX_ALLOCS 64
+static struct
+{
+   void    *rx;
+   void    *rw;
+   size_t   size;
+   unsigned mode;
+} exec_mem_ledger[EXEC_MEM_MAX_ALLOCS];
+static unsigned exec_mem_ledger_count = 0;
+
+static void exec_mem_ledger_add(void *rx, void *rw, size_t size, unsigned mode)
+{
+   if (exec_mem_ledger_count < EXEC_MEM_MAX_ALLOCS)
+   {
+      exec_mem_ledger[exec_mem_ledger_count].rx   = rx;
+      exec_mem_ledger[exec_mem_ledger_count].rw   = rw;
+      exec_mem_ledger[exec_mem_ledger_count].size = size;
+      exec_mem_ledger[exec_mem_ledger_count].mode = mode;
+      exec_mem_ledger_count++;
+   }
+}
+
+static bool exec_mem_ledger_remove(void *rx)
+{
+   for (unsigned i = 0; i < exec_mem_ledger_count; i++)
+   {
+      if (exec_mem_ledger[i].rx == rx)
+      {
+         exec_mem_free(rx, exec_mem_ledger[i].rw,
+                       exec_mem_ledger[i].size,
+                       exec_mem_ledger[i].mode == RETRO_EXEC_MEM_MODE_DUAL_MAP);
+         exec_mem_ledger[i] = exec_mem_ledger[--exec_mem_ledger_count];
+         return true;
+      }
+   }
+   return false;
+}
+
+static void exec_mem_ledger_free_all(void)
+{
+   for (unsigned i = 0; i < exec_mem_ledger_count; i++)
+      exec_mem_free(exec_mem_ledger[i].rx, exec_mem_ledger[i].rw,
+                    exec_mem_ledger[i].size,
+                    exec_mem_ledger[i].mode == RETRO_EXEC_MEM_MODE_DUAL_MAP);
+   exec_mem_ledger_count = 0;
+}
 #endif
 
 #if HAVE_GAME_AI
@@ -3569,12 +3615,57 @@ bool runloop_environment_cb(unsigned cmd, void *data)
       case RETRO_ENVIRONMENT_GET_JIT_CAPABLE:
          {
 #if TARGET_OS_IPHONE
-            *(bool*)data             = jit_available();
+            /* iOS 26 changed how w/x memory can be acquired, and this API isn't helpful anymore */
+            if (__builtin_available(iOS 26, tvOS 26, *))
+               *(bool*)data          = false;
+            else
+               *(bool*)data          = jit_available();
 #else
             *(bool*)data             = true;
 #endif
          }
          break;
+
+      case RETRO_ENVIRONMENT_EXEC_MEM_ALLOC:
+         {
+            struct retro_exec_mem_alloc *alloc =
+               (struct retro_exec_mem_alloc *)data;
+            if (!alloc || alloc->version < 1)
+               return false;
+#if TARGET_OS_IPHONE
+            if (!exec_mem_alloc(&alloc->size, &alloc->mode,
+                                &alloc->rx, &alloc->rw))
+            {
+               alloc->mode = RETRO_EXEC_MEM_MODE_UNAVAILABLE;
+               alloc->rx   = NULL;
+               alloc->rw   = NULL;
+               return true;
+            }
+            if (alloc->size > 0)
+               exec_mem_ledger_add(alloc->rx, alloc->rw,
+                                   alloc->size, alloc->mode);
+#else
+            if (alloc->size > 0)
+               return false;
+            alloc->mode = RETRO_EXEC_MEM_MODE_UNRESTRICTED;
+            alloc->rx   = NULL;
+            alloc->rw   = NULL;
+#endif
+            return true;
+         }
+
+      case RETRO_ENVIRONMENT_EXEC_MEM_FREE:
+         {
+#if TARGET_OS_IPHONE
+            struct retro_exec_mem_free *f =
+               (struct retro_exec_mem_free *)data;
+            if (!f)
+               return false;
+            return exec_mem_ledger_remove(f->rx);
+#else
+            return false;
+#endif
+         }
 
       case RETRO_ENVIRONMENT_SET_NETPACKET_INTERFACE:
 #ifdef HAVE_NETWORKING
@@ -4171,6 +4262,9 @@ void runloop_event_deinit_core(void)
    {
       RARCH_LOG("[Core] Unloading core...\n");
       runloop_st->current_core.retro_deinit();
+#if TARGET_OS_IPHONE
+      exec_mem_ledger_free_all();
+#endif
    }
 
    /* retro_deinit() may call
