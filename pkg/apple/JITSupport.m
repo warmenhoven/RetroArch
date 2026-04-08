@@ -20,6 +20,11 @@
 #include <pthread.h>
 #include <dirent.h>
 
+#include <sys/mman.h>
+#include <signal.h>
+#include <sys/ucontext.h>
+
+#include <libretro.h>
 #include <string/stdstring.h>
 #include <file/file_path.h>
 #include <retro_miscellaneous.h>
@@ -30,28 +35,24 @@ extern boolean_t exc_server(mach_msg_header_t *, mach_msg_header_t *);
 extern int ptrace(int request, pid_t pid, caddr_t addr, int data);
 
 #define    CS_OPS_STATUS        0    /* return status */
-#define CS_KILL     0x00000200  /* kill process if it becomes invalid */
 #define CS_DEBUGGED 0x10000000  /* process is currently or has previously been debugged and allowed to run with invalid pages */
+
+static bool jb_has_debugger_attached(void) {
+    int flags;
+    return !csops(getpid(), CS_OPS_STATUS, &flags, sizeof(flags)) && flags & CS_DEBUGGED;
+}
+
+#if !TARGET_OS_TV
 #define PT_TRACE_ME     0       /* child declares it's being traced */
 #define PT_SIGEXC       12      /* signals as exceptions for current_proc */
 
-#if !TARGET_OS_TV
 static void *exception_handler(void *argument) {
     mach_port_t port = *(mach_port_t *)argument;
     mach_msg_server(exc_server, 2048, port, 0);
     return NULL;
 }
-#endif
-
-static bool jb_has_debugger_attached(void) {
-    int flags;
-    if (@available(iOS 26, tvOS 26, *))
-        return false;
-    return !csops(getpid(), CS_OPS_STATUS, &flags, sizeof(flags)) && flags & CS_DEBUGGED;
-}
 
 bool jb_enable_ptrace_hack(void) {
-#if !TARGET_OS_TV
     bool debugged = jb_has_debugger_attached();
     
     // Thanks to this comment: https://news.ycombinator.com/item?id=18431524
@@ -91,9 +92,202 @@ bool jb_enable_ptrace_hack(void) {
         // also hides actual crashes from the debugger.
         task_set_exception_ports(mach_task_self(), EXC_MASK_BAD_ACCESS, MACH_PORT_NULL, EXCEPTION_DEFAULT, THREAD_STATE_NONE);
     }
-#endif
     
     return true;
+}
+#endif /* !TARGET_OS_TV */
+
+#if !TARGET_OS_SIMULATOR
+static bool device_has_txm(void)
+{
+   static bool has_txm = false;
+   static dispatch_once_t once = 0;
+   dispatch_once(&once, ^{
+      if (@available(iOS 26, tvOS 26, *))
+      {
+         /* Check for TXM firmware on disk. Non-TXM devices (e.g. A10X)
+            running iOS/tvOS 26 won't have this file. */
+         NSString *bootUUID = nil;
+         NSString *preboot = @"/System/Volumes/Preboot";
+         NSError *error = nil;
+         NSArray<NSString *> *items = [[NSFileManager defaultManager]
+            contentsOfDirectoryAtPath:preboot error:&error];
+         for (NSString *entry in items)
+         {
+            if (entry.length == 36)
+            {
+               bootUUID = [preboot stringByAppendingPathComponent:entry];
+               break;
+            }
+         }
+         if (bootUUID)
+         {
+            NSString *bootDir = [bootUUID stringByAppendingPathComponent:@"boot"];
+            items = [[NSFileManager defaultManager]
+               contentsOfDirectoryAtPath:bootDir error:&error];
+            for (NSString *entry in items)
+            {
+               if (entry.length == 96)
+               {
+                  NSString *img = [[bootDir stringByAppendingPathComponent:entry]
+                     stringByAppendingPathComponent:
+                     @"usr/standalone/firmware/FUD/Ap,TrustedExecutionMonitor.img4"];
+                  if (access(img.fileSystemRepresentation, F_OK) == 0)
+                     has_txm = true;
+                  break;
+               }
+            }
+         }
+
+         if (!has_txm)
+         {
+            /* Fallback: /private/preboot/<96>/usr/.../Ap,TrustedExecutionMonitor.img4 */
+            items = [[NSFileManager defaultManager]
+               contentsOfDirectoryAtPath:@"/private/preboot" error:&error];
+            for (NSString *entry in items)
+            {
+               if (entry.length == 96)
+               {
+                  NSString *img = [[@"/private/preboot" stringByAppendingPathComponent:entry]
+                     stringByAppendingPathComponent:
+                     @"usr/standalone/firmware/FUD/Ap,TrustedExecutionMonitor.img4"];
+                  if (access(img.fileSystemRepresentation, F_OK) == 0)
+                     has_txm = true;
+                  break;
+               }
+            }
+         }
+      }
+   });
+   return has_txm;
+}
+
+static bool requires_dual_map(void)
+{
+   if (@available(iOS 26, tvOS 26, *))
+      return true;
+   return false;
+}
+
+static volatile bool s_brk_trapped;
+static void brk_trap_handler(int sig, siginfo_t *info, void *ctx)
+{
+   s_brk_trapped = true;
+   ((ucontext_t *)ctx)->uc_mcontext->__ss.__pc += 4;
+}
+
+/* Ask the debugger to bless an R-X region so TXM allows execution.
+ * Installs a SIGTRAP handler so a missing debugger doesn't crash.
+ * Returns true if the debugger handled the brk, false if our handler
+ * caught it (meaning the pages were NOT blessed). */
+static bool bless_executable_region(void *ptr, size_t size)
+{
+   struct sigaction prev, act = {};
+   act.sa_sigaction = brk_trap_handler;
+   act.sa_flags     = SA_SIGINFO;
+   sigemptyset(&act.sa_mask);
+   sigaction(SIGTRAP, &act, &prev);
+   s_brk_trapped = false;
+   __asm__ volatile(
+      "mov x0, %0\n"
+      "mov x1, %1\n"
+      "brk #0x69"
+      :: "r"(ptr), "r"(size)
+      : "x0", "x1", "memory"
+   );
+   sigaction(SIGTRAP, &prev, NULL);
+   return !s_brk_trapped;
+}
+
+/* Create a R-W mirror of an existing R-X region via vm_remap.
+ * Returns the R-W pointer on success, NULL on failure. */
+static void *create_rw_mirror(void *rx, size_t size)
+{
+   vm_address_t rw = 0;
+   vm_prot_t cur = 0, max = 0;
+   kern_return_t kr = vm_remap(mach_task_self(), &rw, size, 0,
+                               VM_FLAGS_ANYWHERE, mach_task_self(),
+                               (vm_address_t)rx, FALSE,
+                               &cur, &max, VM_INHERIT_DEFAULT);
+   if (kr != KERN_SUCCESS)
+      return NULL;
+   if (mprotect((void *)rw, size, PROT_READ | PROT_WRITE) != 0)
+   {
+      vm_deallocate(mach_task_self(), rw, size);
+      return NULL;
+   }
+   return (void *)rw;
+}
+#endif /* !TARGET_OS_SIMULATOR */
+
+bool exec_mem_alloc(size_t *size, unsigned *mode, void **rx, void **rw)
+{
+#if TARGET_OS_SIMULATOR
+   return false;
+#else
+   if (!jb_has_debugger_attached())
+      return false;
+
+   bool dual = requires_dual_map();
+
+   /* Probe: size 0 = "can you do this and in what mode?" */
+   if (*size == 0)
+   {
+      *mode = dual ? RETRO_EXEC_MEM_MODE_DUAL_MAP
+                   : RETRO_EXEC_MEM_MODE_WX_TOGGLE;
+      *rx   = NULL;
+      *rw   = NULL;
+      return true;
+   }
+
+   /* Page-align the request */
+   size_t page = sysconf(_SC_PAGESIZE);
+   *size = (*size + page - 1) & ~(page - 1);
+
+   if (dual)
+   {
+      void *ptr_rx = mmap(NULL, *size, PROT_READ | PROT_EXEC,
+                          MAP_ANON | MAP_PRIVATE, -1, 0);
+      if (ptr_rx == MAP_FAILED)
+         return false;
+
+      if (device_has_txm() && !bless_executable_region(ptr_rx, *size))
+      {
+         munmap(ptr_rx, *size);
+         return false;
+      }
+
+      void *ptr_rw = create_rw_mirror(ptr_rx, *size);
+      if (!ptr_rw)
+      {
+         munmap(ptr_rx, *size);
+         return false;
+      }
+
+      *mode = RETRO_EXEC_MEM_MODE_DUAL_MAP;
+      *rx   = ptr_rx;
+      *rw   = ptr_rw;
+      return true;
+   }
+
+   /* Pre-iOS 26: single mapping, core toggles W^X via mprotect */
+   void *ptr = mmap(NULL, *size, PROT_READ | PROT_WRITE,
+                    MAP_ANON | MAP_PRIVATE, -1, 0);
+   if (ptr == MAP_FAILED)
+      return false;
+   *mode = RETRO_EXEC_MEM_MODE_WX_TOGGLE;
+   *rx   = ptr;
+   *rw   = ptr;
+   return true;
+#endif
+}
+
+void exec_mem_free(void *rx, void *rw, size_t size, bool dual)
+{
+   if (dual && rw && rw != rx)
+      vm_deallocate(mach_task_self(), (vm_address_t)rw, size);
+   if (rx)
+      munmap(rx, size);
 }
 
 bool jit_available(void)
@@ -131,6 +325,30 @@ bool jit_available(void)
       }
    });
 
-   /* the debugger could be attached at any time, its value can't be cached */
-   return canOpenApps || dylded || doped || jb_has_debugger_attached();
+   if (canOpenApps || dylded || doped)
+      return true;
+
+#if TARGET_OS_SIMULATOR
+   return false;
+#else
+   if (!jb_has_debugger_attached())
+      return false;
+
+   if (requires_dual_map() && device_has_txm())
+   {
+      /* TXM device on iOS/tvOS 26: probe whether the debugger script
+       * is handling brk #0x69.  Uses the safe SIGTRAP handler so a
+       * missing script doesn't crash — it just means JIT won't work. */
+      size_t page = sysconf(_SC_PAGESIZE);
+      void *probe = mmap(NULL, page, PROT_READ | PROT_EXEC,
+                         MAP_ANON | MAP_PRIVATE, -1, 0);
+      if (probe == MAP_FAILED)
+         return false;
+      bool blessed = bless_executable_region(probe, page);
+      munmap(probe, page);
+      if (!blessed)
+         return false;
+   }
+   return true;
+#endif
 }

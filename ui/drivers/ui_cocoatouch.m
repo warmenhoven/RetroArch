@@ -1776,11 +1776,9 @@ void ios_keyboard_end(void)
 
 int main(int argc, char *argv[])
 {
-#if TARGET_OS_IOS
+#if !TARGET_OS_TV
     if (jb_enable_ptrace_hack())
         RARCH_LOG("[Cocoa] Ptrace hack complete, JIT support is enabled.\n");
-    else
-        RARCH_WARN("[Cocoa] Ptrace hack NOT available; Please use an app like Jitterbug.\n");
 #endif
 #ifdef HAVE_SDL2
     SDL_SetMainReady();
