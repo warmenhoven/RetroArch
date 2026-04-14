@@ -283,6 +283,7 @@ static void exec_mem_ledger_free_all(void)
                     exec_mem_ledger[i].size,
                     exec_mem_ledger[i].mode == RETRO_EXEC_MEM_MODE_DUAL_MAP);
    exec_mem_ledger_count = 0;
+   exec_mem_pool_reset();
 }
 #endif
 
