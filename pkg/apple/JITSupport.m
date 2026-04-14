@@ -177,9 +177,10 @@ static void brk_trap_handler(int sig, siginfo_t *info, void *ctx)
 }
 
 /* Ask the debugger to bless an R-X region so TXM allows execution.
- * Installs a SIGTRAP handler so a missing debugger doesn't crash.
- * Returns true if the debugger handled the brk, false if our handler
- * caught it (meaning the pages were NOT blessed). */
+ * Uses the universal.js protocol: brk #0xf00d with x16=1
+ * (CMD_PREPARE_REGION). Installs a SIGTRAP handler so a missing
+ * debugger doesn't crash — it just means the pages were NOT blessed.
+ * Returns true if the debugger handled the brk. */
 static bool bless_executable_region(void *ptr, size_t size)
 {
    struct sigaction prev, act = {};
@@ -191,12 +192,32 @@ static bool bless_executable_region(void *ptr, size_t size)
    __asm__ volatile(
       "mov x0, %0\n"
       "mov x1, %1\n"
-      "brk #0x69"
+      "mov x16, #1\n"
+      "brk #0xf00d"
       :: "r"(ptr), "r"(size)
-      : "x0", "x1", "memory"
+      : "x0", "x1", "x16", "memory"
    );
    sigaction(SIGTRAP, &prev, NULL);
    return !s_brk_trapped;
+}
+
+/* Tell the debugger to detach. Uses the universal.js protocol:
+ * brk #0xf00d with x16=0 (CMD_DETACH). After this call the debugger
+ * disconnects and the process runs standalone. */
+static void detach_debugger(void)
+{
+   struct sigaction prev, act = {};
+   act.sa_sigaction = brk_trap_handler;
+   act.sa_flags     = SA_SIGINFO;
+   sigemptyset(&act.sa_mask);
+   sigaction(SIGTRAP, &act, &prev);
+   s_brk_trapped = false;
+   __asm__ volatile(
+      "mov x16, #0\n"
+      "brk #0xf00d"
+      ::: "x16", "memory"
+   );
+   sigaction(SIGTRAP, &prev, NULL);
 }
 
 /* Create a R-W mirror of an existing R-X region via vm_remap.
@@ -220,17 +241,116 @@ static void *create_rw_mirror(void *rx, size_t size)
 }
 #endif /* !TARGET_OS_SIMULATOR */
 
+/* ── Pre-allocated JIT memory pool ──────────────────────────────────
+ * On iOS 26+ TXM devices the debugger must bless executable pages via
+ * brk #0x69 before they can be executed. Rather than keeping the
+ * debugger attached for the lifetime of the process, we allocate one
+ * large pool at startup, bless it in a single brk call, and then the
+ * debugger can detach. All subsequent exec_mem_alloc requests are
+ * bump-allocated from this pre-blessed pool. */
+#define EXEC_MEM_POOL_SIZE (544UL * 1024 * 1024)
+
+static void    *s_pool_rx   = NULL;
+static void    *s_pool_rw   = NULL;
+static size_t   s_pool_size = 0;
+static size_t   s_pool_used = 0;
+
+bool exec_mem_pool_init(void)
+{
+   if (s_pool_rx)
+      return true;
+
+   if (!jb_has_debugger_attached())
+      return false;
+
+   if (!requires_dual_map())
+      return false;
+
+   size_t page = sysconf(_SC_PAGESIZE);
+   size_t size = (EXEC_MEM_POOL_SIZE + page - 1) & ~(page - 1);
+
+   void *rx = mmap(NULL, size, PROT_READ | PROT_EXEC,
+                   MAP_ANON | MAP_PRIVATE, -1, 0);
+   if (rx == MAP_FAILED)
+      return false;
+
+   /* TXM devices need the debugger to bless executable pages.
+    * Non-TXM devices (e.g. A10X on tvOS 26) can mmap R-X freely
+    * with CS_DEBUGGED — no blessing required. */
+   if (device_has_txm() && !bless_executable_region(rx, size))
+   {
+      munmap(rx, size);
+      return false;
+   }
+
+   void *rw = create_rw_mirror(rx, size);
+   if (!rw)
+   {
+      munmap(rx, size);
+      return false;
+   }
+
+   s_pool_rx   = rx;
+   s_pool_rw   = rw;
+   s_pool_size = size;
+   s_pool_used = 0;
+   RARCH_LOG("[JIT] Pool allocated: %zu MB (rx=%p rw=%p)\n",
+             size / (1024 * 1024), rx, rw);
+
+   /* All JIT memory is pre-blessed. Tell the debugger to detach —
+    * we no longer need it and running without a debugger avoids
+    * EXC_BAD_ACCESS interception overhead. */
+   detach_debugger();
+   RARCH_LOG("[JIT] Debugger detached\n");
+
+   return true;
+}
+
+void exec_mem_pool_reset(void)
+{
+   s_pool_used = 0;
+}
+
 bool exec_mem_alloc(size_t *size, unsigned *mode, void **rx, void **rw)
 {
 #if TARGET_OS_SIMULATOR
    return false;
 #else
+   /* ── Pool path (iOS 26+ TXM) ── */
+   if (s_pool_rx)
+   {
+      if (*size == 0)
+      {
+         *mode = RETRO_EXEC_MEM_MODE_DUAL_MAP;
+         *size = s_pool_size - s_pool_used;
+         *rx   = NULL;
+         *rw   = NULL;
+         return true;
+      }
+
+      size_t page = sysconf(_SC_PAGESIZE);
+      *size = (*size + page - 1) & ~(page - 1);
+
+      if (s_pool_used + *size > s_pool_size)
+      {
+         RARCH_ERR("[JIT] Pool exhausted: need %zu, have %zu\n",
+                   *size, s_pool_size - s_pool_used);
+         return false;
+      }
+
+      *mode = RETRO_EXEC_MEM_MODE_DUAL_MAP;
+      *rx   = (uint8_t *)s_pool_rx + s_pool_used;
+      *rw   = (uint8_t *)s_pool_rw + s_pool_used;
+      s_pool_used += *size;
+      return true;
+   }
+
+   /* ── Legacy per-allocation path (pre-iOS 26, jailbreak, etc.) ── */
    if (!jb_has_debugger_attached())
       return false;
 
    bool dual = requires_dual_map();
 
-   /* Probe: size 0 = "can you do this and in what mode?" */
    if (*size == 0)
    {
       *mode = dual ? RETRO_EXEC_MEM_MODE_DUAL_MAP
@@ -240,7 +360,6 @@ bool exec_mem_alloc(size_t *size, unsigned *mode, void **rx, void **rw)
       return true;
    }
 
-   /* Page-align the request */
    size_t page = sysconf(_SC_PAGESIZE);
    *size = (*size + page - 1) & ~(page - 1);
 
@@ -284,6 +403,10 @@ bool exec_mem_alloc(size_t *size, unsigned *mode, void **rx, void **rw)
 
 void exec_mem_free(void *rx, void *rw, size_t size, bool dual)
 {
+   /* Pool allocations are freed in bulk via exec_mem_pool_reset */
+   if (s_pool_rx)
+      return;
+
    if (dual && rw && rw != rx)
       vm_deallocate(mach_task_self(), (vm_address_t)rw, size);
    if (rx)
@@ -292,6 +415,10 @@ void exec_mem_free(void *rx, void *rw, size_t size, bool dual)
 
 bool jit_available(void)
 {
+   /* Pool was allocated at startup — JIT is ready */
+   if (s_pool_rx)
+      return true;
+
    static bool canOpenApps = false;
    static dispatch_once_t appsOnce = 0;
    dispatch_once(&appsOnce, ^{
