@@ -1,1 +1,3 @@
 breakpoint set --func-regex "^(NS|UI)ApplicationMain$" --command "process handle --pass true --stop false SIGBUS" --auto-continue true
+breakpoint set --func-regex "bless_executable_region" --auto-continue true --command "thread return 0"
+breakpoint set --func-regex "detach_debugger" --auto-continue true --command "thread return"
