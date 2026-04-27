@@ -4388,6 +4388,34 @@ static void input_poll_overlay(
    if (input_overlay_show_inputs == OVERLAY_SHOW_INPUT_NONE)
       button_pressed = false;
 
+   /* Suppress menu_toggle release-fire when the user drags off the
+    * hitbox without lifting. menu_toggle fires on release, and the
+    * release detector cannot tell a lift apart from a slide-off; any
+    * old-frame touch that is still on screen but no longer in the
+    * hitbox is treated as a cancel. */
+   {
+      int d, t;
+      for (d = 0; d < (int)ol->active->size; d++)
+      {
+         struct overlay_desc *desc = &ol->active->descs[d];
+
+         if (    desc->touch_mask
+             || !desc->old_touch_mask
+             || !BIT256_GET(desc->button_mask, RARCH_MENU_TOGGLE))
+            continue;
+
+         for (t = 0; t < ol_state->touch_count; t++)
+         {
+            int old_t = input_st->old_touch_index_lut[t];
+            if (old_t >= 0 && BIT32_GET(desc->old_touch_mask, old_t))
+            {
+               input_st->flags |= INP_FLAG_MENU_PRESS_CANCEL;
+               break;
+            }
+         }
+      }
+   }
+
    if (button_pressed || ol_state->touch_count)
       input_overlay_post_poll(overlay_visibility, ol,
             button_pressed, opacity);
