@@ -405,8 +405,6 @@ typedef struct vk
       VkSemaphore *semaphores;
       VkSemaphore signal_semaphore; /* ptr alignment */
 
-      struct retro_hw_render_interface_vulkan iface;
-
       unsigned capacity_cmd;
       unsigned last_width;
       unsigned last_height;
@@ -427,6 +425,54 @@ typedef struct vk
    } tracker;
    uint32_t flags;
 } vk_t;
+
+/* The interface handed out through
+ * RETRO_ENVIRONMENT_GET_HW_RENDER_INTERFACE must stay valid until the
+ * core receives context_destroy.  A cache_context core receives
+ * neither context_destroy nor context_reset across a driver reinit,
+ * and its render thread keeps calling through the interface the whole
+ * time -- so the interface, and everything reachable from its handle,
+ * cannot live inside the vk_t that reinit frees and reallocates.
+ * Keep them here instead: one instance for the lifetime of the
+ * process, with the current vk_t behind an indirection that tolerates
+ * being NULL while no driver is alive.
+ *
+ * Lock order: `lock` is only ever held on its own -- interface
+ * callbacks must not acquire the queue lock while holding it, and
+ * driver code must not acquire it while holding the queue lock --
+ * so the two locks can never deadlock against each other. */
+typedef struct
+{
+   struct retro_hw_render_interface_vulkan iface;
+   vk_t *vk;             /* current driver instance; NULL while torn down */
+#ifdef HAVE_THREADS
+   slock_t *lock;        /* serializes vk swaps against interface calls */
+   slock_t *queue_lock;  /* process-lifetime queue lock from the context */
+#endif
+} vulkan_hw_shared_t;
+
+static vulkan_hw_shared_t vulkan_hw_shared;
+
+/* Resolve the current vk_t on behalf of an interface callback.  Holds
+ * vulkan_hw_shared.lock until the matching _leave() -- teardown
+ * acquiring the same lock is thereby forced to wait for any call in
+ * flight, and calls arriving after teardown see NULL. */
+static vk_t *vulkan_hw_shared_enter(void)
+{
+#ifdef HAVE_THREADS
+   if (vulkan_hw_shared.lock)
+      slock_lock(vulkan_hw_shared.lock);
+#endif
+   return vulkan_hw_shared.vk;
+}
+
+static void vulkan_hw_shared_leave(void)
+{
+#ifdef HAVE_THREADS
+   if (vulkan_hw_shared.lock)
+      slock_unlock(vulkan_hw_shared.lock);
+#endif
+}
 
 typedef struct
 {
@@ -4831,6 +4877,23 @@ static void vulkan_free(void *data)
    if (!vk)
       return;
 
+   /* Unpublish from the HW render interface before anything is torn
+    * down.  Acquiring the lock waits out any interface call in
+    * flight on a core thread; calls arriving afterwards see NULL and
+    * no-op.  Without this, a cache_context core -- which receives no
+    * context_destroy across a driver reinit -- keeps calling into
+    * this vk_t after it is freed. */
+#ifdef HAVE_THREADS
+   if (vulkan_hw_shared.lock)
+      slock_lock(vulkan_hw_shared.lock);
+#endif
+   if (vulkan_hw_shared.vk == vk)
+      vulkan_hw_shared.vk = NULL;
+#ifdef HAVE_THREADS
+   if (vulkan_hw_shared.lock)
+      slock_unlock(vulkan_hw_shared.lock);
+#endif
+
    if (vk->context && vk->context->device)
    {
 #ifdef HAVE_THREADS
@@ -4887,14 +4950,22 @@ static void vulkan_free(void *data)
 
 static uint32_t vulkan_get_sync_index(void *handle)
 {
-   vk_t *vk = (vk_t*)handle;
-   return vk->context->current_frame_index;
+   uint32_t idx = 0;
+   vk_t *vk     = vulkan_hw_shared_enter();
+   if (vk)
+      idx       = vk->context->current_frame_index;
+   vulkan_hw_shared_leave();
+   return idx;
 }
 
 static uint32_t vulkan_get_sync_index_mask(void *handle)
 {
-   vk_t *vk = (vk_t*)handle;
-   return (1 << vk->context->num_swapchain_images) - 1;
+   uint32_t mask = 0;
+   vk_t *vk      = vulkan_hw_shared_enter();
+   if (vk)
+      mask       = (1 << vk->context->num_swapchain_images) - 1;
+   vulkan_hw_shared_leave();
+   return mask;
 }
 
 static void vulkan_set_image(void *handle,
@@ -4903,7 +4974,13 @@ static void vulkan_set_image(void *handle,
       const VkSemaphore *semaphores,
       uint32_t src_queue_family)
 {
-   vk_t *vk              = (vk_t*)handle;
+   vk_t *vk              = vulkan_hw_shared_enter();
+
+   if (!vk)
+   {
+      vulkan_hw_shared_leave();
+      return;
+   }
 
    vk->hw.image          = image;
    vk->hw.num_semaphores = num_semaphores;
@@ -4935,6 +5012,7 @@ static void vulkan_set_image(void *handle,
                " %u semaphore(s).\n", num_semaphores);
          vk->hw.num_semaphores = 0;
          vk->flags            &= ~VK_FLAG_HW_VALID_SEMAPHORE;
+         vulkan_hw_shared_leave();
          return;
       }
 
@@ -4947,6 +5025,8 @@ static void vulkan_set_image(void *handle,
       vk->flags                   |= VK_FLAG_HW_VALID_SEMAPHORE;
       vk->hw.src_queue_family      = src_queue_family;
    }
+
+   vulkan_hw_shared_leave();
 }
 
 static void vulkan_wait_sync_index(void *handle)
@@ -4958,8 +5038,15 @@ static void vulkan_wait_sync_index(void *handle)
 static void vulkan_set_command_buffers(void *handle, uint32_t num_cmd,
       const VkCommandBuffer *cmd)
 {
-   vk_t *vk                   = (vk_t*)handle;
    unsigned required_capacity = num_cmd + 1;
+   vk_t *vk                   = vulkan_hw_shared_enter();
+
+   if (!vk)
+   {
+      vulkan_hw_shared_leave();
+      return;
+   }
+
    if (required_capacity > vk->hw.capacity_cmd)
    {
       VkCommandBuffer *hw_cmd = (VkCommandBuffer*)
@@ -4976,6 +5063,7 @@ static void vulkan_set_command_buffers(void *handle, uint32_t num_cmd,
          RARCH_ERR("[Vulkan] Failed to allocate room for %u command"
                " buffer(s).\n", num_cmd);
          vk->hw.num_cmd       = 0;
+         vulkan_hw_shared_leave();
          return;
       }
 
@@ -4985,28 +5073,36 @@ static void vulkan_set_command_buffers(void *handle, uint32_t num_cmd,
 
    vk->hw.num_cmd             = num_cmd;
    memcpy(vk->hw.cmd, cmd, sizeof(VkCommandBuffer) * num_cmd);
+   vulkan_hw_shared_leave();
 }
 
+/* lock_queue/unlock_queue deliberately bypass the vk indirection: the
+ * queue lock has process lifetime (see vulkan_context_init_device),
+ * so a core thread may take it even while no driver is alive, and the
+ * hold-across-submit semantics mean it cannot nest inside
+ * vulkan_hw_shared.lock without inverting against teardown. */
 static void vulkan_lock_queue(void *handle)
 {
 #ifdef HAVE_THREADS
-   vk_t *vk = (vk_t*)handle;
-   slock_lock(vk->context->queue_lock);
+   if (vulkan_hw_shared.queue_lock)
+      slock_lock(vulkan_hw_shared.queue_lock);
 #endif
 }
 
 static void vulkan_unlock_queue(void *handle)
 {
 #ifdef HAVE_THREADS
-   vk_t *vk = (vk_t*)handle;
-   slock_unlock(vk->context->queue_lock);
+   if (vulkan_hw_shared.queue_lock)
+      slock_unlock(vulkan_hw_shared.queue_lock);
 #endif
 }
 
 static void vulkan_set_signal_semaphore(void *handle, VkSemaphore semaphore)
 {
-   vk_t *vk = (vk_t*)handle;
-   vk->hw.signal_semaphore = semaphore;
+   vk_t *vk = vulkan_hw_shared_enter();
+   if (vk)
+      vk->hw.signal_semaphore = semaphore;
+   vulkan_hw_shared_leave();
 }
 
 /* Drop every reference the frontend holds to core-owned GPU objects.
@@ -5055,7 +5151,7 @@ static void vulkan_invalidate_hw_render_cache(void *data)
 static void vulkan_init_hw_render(vk_t *vk)
 {
    struct retro_hw_render_interface_vulkan *iface   =
-      &vk->hw.iface;
+      &vulkan_hw_shared.iface;
    struct retro_hw_render_callback *hwr =
       video_driver_get_hw_context();
 
@@ -5063,6 +5159,12 @@ static void vulkan_init_hw_render(vk_t *vk)
       return;
 
    vk->flags                    |= VK_FLAG_HW_ENABLE;
+
+#ifdef HAVE_THREADS
+   if (!vulkan_hw_shared.lock)
+      vulkan_hw_shared.lock      = slock_new();
+   vulkan_hw_shared.queue_lock   = vk->context->queue_lock;
+#endif
 
    iface->interface_type         = RETRO_HW_RENDER_INTERFACE_VULKAN;
    iface->interface_version      = RETRO_HW_RENDER_INTERFACE_VULKAN_VERSION;
@@ -5073,7 +5175,7 @@ static void vulkan_init_hw_render(vk_t *vk)
    iface->queue                  = vk->context->queue;
    iface->queue_index            = vk->context->graphics_queue_index;
 
-   iface->handle                 = vk;
+   iface->handle                 = &vulkan_hw_shared;
    iface->set_image              = vulkan_set_image;
    iface->get_sync_index         = vulkan_get_sync_index;
    iface->get_sync_index_mask    = vulkan_get_sync_index_mask;
@@ -5085,6 +5187,18 @@ static void vulkan_init_hw_render(vk_t *vk)
 
    iface->get_device_proc_addr   = vkGetDeviceProcAddr;
    iface->get_instance_proc_addr = vulkan_symbol_wrapper_instance_proc_addr();
+
+   /* Publish last: interface calls racing this init must see either
+    * no driver or a fully-initialized one. */
+#ifdef HAVE_THREADS
+   if (vulkan_hw_shared.lock)
+      slock_lock(vulkan_hw_shared.lock);
+#endif
+   vulkan_hw_shared.vk           = vk;
+#ifdef HAVE_THREADS
+   if (vulkan_hw_shared.lock)
+      slock_unlock(vulkan_hw_shared.lock);
+#endif
 }
 
 static void vulkan_init_readback(vk_t *vk, bool video_gpu_record)
@@ -7903,7 +8017,7 @@ static bool vulkan_get_hw_render_interface(void *data,
       const struct retro_hw_render_interface **iface)
 {
    vk_t *vk = (vk_t*)data;
-   *iface   = (const struct retro_hw_render_interface*)&vk->hw.iface;
+   *iface   = (const struct retro_hw_render_interface*)&vulkan_hw_shared.iface;
    return ((vk->flags & VK_FLAG_HW_ENABLE) > 0);
 }
 

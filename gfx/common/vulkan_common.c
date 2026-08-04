@@ -73,6 +73,17 @@ static VkInstance                    cached_instance_vk;
 static VkDevice                      cached_device_vk;
 static retro_vulkan_destroy_device_t cached_destroy_device_vk;
 
+#ifdef HAVE_THREADS
+/* Process-lifetime queue lock, reused by every context bring-up and
+ * deliberately never freed.  The HW render interface hands this lock
+ * to libretro cores whose render threads lock and unlock it
+ * asynchronously -- including across a driver reinit, during which a
+ * cache_context core receives no context_destroy and so is never
+ * quiesced.  Freeing the lock per-reinit is therefore a use-after-free
+ * against whichever core thread holds or is blocked on it. */
+static slock_t                      *queue_lock_persistent;
+#endif
+
 #ifdef __APPLE__
 /* On Apple platforms the Vulkan implementation is provided by MoltenVK
  * (loaded dynamically, either directly or through the Vulkan loader).
@@ -1037,7 +1048,9 @@ static bool vulkan_context_init_device(gfx_ctx_vulkan_data_t *vk)
    }
 
 #ifdef HAVE_THREADS
-   vk->context.queue_lock = slock_new();
+   if (!queue_lock_persistent)
+      queue_lock_persistent = slock_new();
+   vk->context.queue_lock   = queue_lock_persistent;
    if (!vk->context.queue_lock)
    {
       RARCH_ERR("[Vulkan] Failed to create queue lock.\n");
@@ -3085,20 +3098,11 @@ void vulkan_context_destroy(gfx_ctx_vulkan_data_t *vk,
    }
 
 #ifdef HAVE_THREADS
-   /* vulkan_context_init_device() creates a fresh queue_lock on
-    * every bring-up -- including the cached-context path, which
-    * restores the device and then falls through to slock_new() like
-    * any other init -- so the lock's lifetime ends here regardless
-    * of whether the device itself is being cached.  Everything that
-    * takes it (vulkan_present, the frame submission paths) is done
-    * by this point: vkDeviceWaitIdle() ran at the top of this
-    * function.  Freeing it here stops one slock leaking per driver
-    * reinit -- every resolution change and fullscreen toggle. */
-   if (vk->context.queue_lock)
-   {
-      slock_free(vk->context.queue_lock);
-      vk->context.queue_lock = NULL;
-   }
+   /* The queue lock is process-lifetime (queue_lock_persistent, see
+    * its declaration): a core's render thread may hold or be blocked
+    * on it right now through the HW render interface, so it must NOT
+    * be freed here -- only unreferenced. */
+   vk->context.queue_lock = NULL;
 #endif
 }
 
