@@ -7,7 +7,7 @@
 #ifdef HAVE_MICROPHONE
 S_BOOL(microphone_enable, MICROPHONE_ENABLE,
       "microphone_enable",
-      DEFAULT_AUDIO_ENABLE, SD_FLAG_NONE, 0, 0,
+      DEFAULT_MICROPHONE_ENABLE, SD_FLAG_NONE, 0, 0,
       "Microphone",
       "Enable audio input in supported cores. Has no overhead if the core isn't using a microphone.")
 #endif

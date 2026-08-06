@@ -26,6 +26,6 @@ S_BOOL(fastforward_frameskip, FASTFORWARD_FRAMESKIP,
       "Skip frames according to fast-forward rate. This conserves power and allows the use of third party frame limiting.")
 S_BOOL_EX_H(vrr_runloop_enable, VRR_RUNLOOP_ENABLE,
       "vrr_runloop_enable",
-      false, SD_FLAG_CMD_APPLY_AUTO, 0, CMD_EVENT_NONE, setting_bool_action_left_with_refresh, NULL, NULL, NULL, setting_bool_action_left_with_refresh, setting_bool_action_right_with_refresh, 0,
+      DEFAULT_VRR_RUNLOOP_ENABLE, SD_FLAG_CMD_APPLY_AUTO, 0, CMD_EVENT_NONE, setting_bool_action_left_with_refresh, NULL, NULL, NULL, setting_bool_action_left_with_refresh, setting_bool_action_right_with_refresh, 0,
       "Sync to Exact Content Framerate (G-Sync, FreeSync)",
       "No deviation from core requested timing. Use for Variable Refresh Rate screens (G-Sync, FreeSync, HDMI 2.1 VRR).")

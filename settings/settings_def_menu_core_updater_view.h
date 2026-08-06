@@ -9,7 +9,7 @@
 #if defined(HAVE_NETWORKING) && !defined(HAVE_LAKKA) || defined(SETTINGS_DEF_STRINGS_PASS)
 S_BOOL(menu_show_core_updater, MENU_SHOW_CORE_UPDATER,
       "menu_show_core_updater",
-      DEFAULT_MENU_SHOW_ONLINE_UPDATER, SD_FLAG_NONE, 0, 0,
+      DEFAULT_MENU_SHOW_CORE_UPDATER, SD_FLAG_NONE, 0, 0,
       "Show 'Core Downloader'",
       "Show the ability to update cores (and core info files) in the 'Online Updater' option.")
 #endif
