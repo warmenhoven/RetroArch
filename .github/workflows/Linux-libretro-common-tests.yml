@@ -76,7 +76,10 @@ jobs:
           # coverage, in order -- coverage files collide otherwise.
           # Any suite failing to build, or any check failing, or any
           # sanitizer report, fails the job.
-          make -f Makefile.test \
+          # 'all' by name: the default goal of Makefile.test is
+          # win32-configs, so a bare make here builds the Windows A/W
+          # matrix and none of the suites this step exists to run.
+          make -f Makefile.test all \
              LIBCHECK_CFLAGS="$(pkg-config --cflags check)" \
              CFLAGS="$(pkg-config --cflags check)"
           echo "[pass] libretro-common unit test suites"
