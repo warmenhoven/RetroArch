@@ -370,9 +370,7 @@ typedef struct vk
        *   [5] snow
        *   [6] bokeh
        *   [7] snowflake
-       * All entries are TRIANGLE_STRIP topology.  The history of this
-       * array previously included parallel TRIANGLE_LIST variants in
-       * even slots; they were built at init and never used. */
+       * All entries are TRIANGLE_STRIP topology. */
       VkPipeline pipelines[8];
 #ifdef VULKAN_HDR_SWAPCHAIN
       VkPipeline pipelines_sdr[8]; /* SDR offscreen variants, same layout */
@@ -5184,8 +5182,8 @@ static void vulkan_destroy_hdr_buffer(VkDevice device, struct vk_image *img)
 #endif
 
 /* The interface handed to the core by
- * vulkan_get_hw_render_interface().  It used to be a member of vk_t,
- * so what the core received was an interior pointer into an
+ * vulkan_get_hw_render_interface().  It lives outside vk_t, so the
+ * pointer a core receives is not an interior pointer into an
  * allocation vulkan_free() releases.
  *
  * A core that submits from its own thread - PPSSPP's
@@ -7024,9 +7022,9 @@ static void vulkan_draw_quad(vk_t *vk, const struct vk_draw_quad *quad)
 
    /* Upload descriptors */
    {
-      /* Only allocate and update descriptors when state actually changed.
-       * Previously, a UBO was allocated unconditionally before this check,
-       * wasting buffer chain space every frame (fix #1). */
+      /* Descriptors are allocated and updated only when the state
+       * they describe moved, so an unchanged frame costs the buffer
+       * chain nothing. */
       if (
                memcmp(quad->mvp,
                   &vk->tracker.mvp, sizeof(*quad->mvp)) != 0

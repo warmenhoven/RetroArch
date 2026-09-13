@@ -330,8 +330,7 @@ bool glslang_compile_shader_cached(const char *shader_path,
 /* Merge parameters harvested into @meta into @shader, enforcing the
  * duplicate-must-match rule.  @pass is the pass @meta was harvested
  * from, and is recorded on each parameter this call adds, so that a
- * parameter is owned by the first pass declaring it.  (Formerly a C++
- * overload of slang_preprocess_parse_parameters.) */
+ * parameter is owned by the first pass declaring it. */
 bool slang_preprocess_parse_parameters_meta(const glslang_meta *meta,
       struct video_shader *shader, unsigned pass);
 

@@ -147,9 +147,10 @@ static bool shader_line_buf_append_batch(struct shader_line_buf *buf,
          if (!new_off)
             return false;
          memcpy(new_off, buf->line_offsets, buf->num_lines * sizeof(size_t));
-         /* Don't free line_offsets—it's part of combined block;
-          * data still points to start of the block. */
-         /* Actually, we must split: allocate data separately too. */
+         /* The combined block holds both arrays, so growing one of
+          * them splits the pair: the offsets move to the allocation
+          * above and the data is copied to one of its own, after
+          * which the combined block is released once. */
          {
             char *new_data = (char*)malloc(buf->cap);
             if (!new_data)
@@ -201,10 +202,6 @@ const char *shader_line_buf_get(const struct shader_line_buf *buf, size_t index)
 {
    return buf->data + buf->line_offsets[index];
 }
-
-/* -------------------------------------------------------------------
- * Original helper functions (unchanged)
- * ------------------------------------------------------------------- */
 
 /* Copy the quoted include filename out of @line into @s.
  *
@@ -567,7 +564,8 @@ static bool glslang_read_shader_file_internal(const char *path,
     * written to: no terminator is planted at buf_len, and no line is
     * compacted in place.  That keeps this function usable on memory
     * the include cache owns and lends out read-only, so a cache hit
-    * no longer has to hand over a private copy of the whole file.
+    * hands over the bytes themselves rather than a private copy of
+    * the whole file.
     *
     * Line ends are found with memchr() and \r is handled without
     * copying in the two cases that cover real files - no \r at all,

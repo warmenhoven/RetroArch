@@ -798,8 +798,7 @@ struct gl3_common_resources
    gl3_buffer_locations quad_loc;
 };
 
-/* Every default was zero, so a memset covers the initializers the
- * in-class ones used to supply. */
+/* Every field starts at zero, so a memset covers the whole struct. */
 static void gl3_common_resources_init(gl3_common_resources *common)
 {
    static float quad_data[] = {
@@ -824,8 +823,8 @@ static void gl3_common_resources_init(gl3_common_resources *common)
 static void gl3_common_resources_free(gl3_common_resources *common)
 {
    size_t i;
-   /* The unique_ptr vector used to free these on destruction; the plain
-    * array does not, so every LUT has to be released by hand. */
+   /* The LUT array owns its textures, so each one is released by
+    * hand before the array itself goes. */
    for (i = 0; i < common->num_luts; i++)
       gl3_static_texture_free(&common->luts[i]);
    free(common->luts);
@@ -1176,8 +1175,8 @@ static void gl3_pass_build_commands(struct gl3_pass *pass,
       const float *mvp);
 static void gl3_pass_free(struct gl3_pass *pass);
 
-/* Every default was zero except these four, which the in-class
- * initializers used to supply. */
+/* Every field starts at zero except the four set below, so the
+ * allocation is zeroed and only those are written. */
 static struct gl3_pass *gl3_pass_new(bool final_pass)
 {
    struct gl3_pass *pass = (struct gl3_pass*)calloc(1, sizeof(*pass));

@@ -5186,8 +5186,8 @@ static bool gl3_frame(void *data, const void *frame,
        * when any UI is composited this frame (menu, overlay, OSD
        * message, statistics, widgets), the SDR content is scaled by
        * Menu HDR Brightness (video_hdr_menu_nits) instead of paper
-       * white -- this is the setting that controls menu brightness on
-       * the other four HDR drivers and was previously ignored here. */
+       * white -- this is the setting that controls menu brightness
+       * across the HDR drivers. */
 #ifdef HAVE_MENU
       if (gl->flags & GL3_FLAG_MENU_TEXTURE_ENABLE)
          ui_visible = true;
