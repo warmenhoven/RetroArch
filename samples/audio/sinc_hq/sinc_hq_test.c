@@ -168,6 +168,26 @@ static void reset_integer(double ratio, enum sinc_int16_quality quality, int hq)
    sinc_resampler_int16_free(fresh);
 }
 
+static void simd_phases(double ratio, enum resampler_quality quality)
+{
+   void *scalar = sinc_resampler_init_hq(ratio, quality, 0, 0);
+   void *simd = sinc_resampler_init_hq(ratio, quality, TEST_SIMD, 0);
+   unsigned step;
+   CHECK(scalar && simd);
+   if (!scalar || !simd) exit(2);
+   for (step = 0; step < 5; step++)
+   {
+      double live = ratio * (step == 1 ? 0.9995 : (step == 2 ? 1.0005 : 1.0));
+      size_t na = run(scalar, &sinc_resampler, a, live, INPUT);
+      size_t nb = run(simd, &sinc_resampler, b, live, 127);
+      size_t j;
+      CHECK(na == nb);
+      for (j = 0; j < na * 2; j++) CHECK(fabs(a[j] - b[j]) < 2e-6);
+   }
+   sinc_resampler.free(scalar);
+   sinc_resampler.free(simd);
+}
+
 static void active(double ratio)
 {
    void *c = sinc_resampler_init_hq(ratio, RESAMPLER_QUALITY_NORMAL, 0, 1);
@@ -182,9 +202,9 @@ static void active(double ratio)
    double max_error = 0.0;
    CHECK(c && simd && integer);
    if (!c || !simd || !integer) exit(2);
-   for (step = 0; step < 3; step++)
+   for (step = 0; step < 5; step++)
    {
-      double live_ratio = ratio * (step == 0 ? 1.0 : (step == 1 ? 0.9995 : 1.0005));
+      double live_ratio = ratio * (step == 1 ? 0.9995 : (step == 2 ? 1.0005 : 1.0));
       na = run(c, &sinc_resampler, a, live_ratio, INPUT);
       nb = run(simd, &sinc_resampler, b, live_ratio, 127);
       ni = run_i(integer, ai, live_ratio, 127, sinc_resampler_int16_process);
@@ -295,6 +315,7 @@ int main(int argc, char **argv)
          reset_integer(ratios[r], iq, 0);
          reset_integer(ratios[r], iq, 1);
          bypass(ratios[r], (enum resampler_quality)q, 0);
+         simd_phases(ratios[r], (enum resampler_quality)q);
          if (ratios[r] < 2.0) bypass(ratios[r], (enum resampler_quality)q, 1);
       }
       if (ratios[r] >= 2.0) active(ratios[r]);

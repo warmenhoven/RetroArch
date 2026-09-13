@@ -816,6 +816,16 @@ jobs:
         run: |
           make check SANITIZER=address,undefined
 
+      - name: Build and run sinc AVX tests (C89, ASan + UBSan)
+        working-directory: samples/audio/sinc_hq
+        run: |
+          if grep -qw avx /proc/cpuinfo; then
+            make clean
+            make check CC="gcc -mavx" SANITIZER=address,undefined
+          else
+            echo "AVX unavailable on this runner; scalar/SSE tests ran above."
+          fi
+
       - name: Build and run extra-channel capacity test (ASan + UBSan)
         working-directory: samples/audio/extra_capacity
         run: |
