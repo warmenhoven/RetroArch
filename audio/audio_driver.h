@@ -511,24 +511,14 @@ typedef struct
     */
    int16_t *arena_int16;                                 /* ptr alignment */
    float   *arena_float;                                 /* ptr alignment */
-   /**
-    * Threaded pipeline (AUDIO_FLAG_PIPELINE_THREADED). pipe_ring carries
-    * raw int16 stereo frames at the core's rate from the main thread to
-    * the audio thread; lock-free, one producer (frame end / rewind /
-    * menu audio, all main thread) and one consumer (the wrapper thread).
-    * pipe_scratch is the consumer's bounce buffer for one slice pulled
-    * out of the ring; pipe_conv is the producer's staging area for the
-    * float batch callback, which must be int16 before it is published.
-    * Both are regions of arena_int16.
-    */
+   /* Native-format frames from one producer to the audio consumer.
+    * pipe_scratch is the consumer bounce buffer; pipe_conv is producer
+    * conversion staging. Both live in pipe_arena. */
    retro_spsc_t pipe_ring;
    uint8_t *pipe_scratch;
    uint8_t *pipe_conv;
-   /* Both in pipe_arena, each a pass at the widest frame the ring can
-    * carry. pipe_record_i16 stays in the int16 arena: the recorder's
-    * staging for a float core, converted only while it records. */
+   /* Both in pipe_arena, each a pass at the widest frame the ring can carry. */
    void    *pipe_arena;
-   int16_t *pipe_record_i16;
    /* Written once by the wrapper thread as it leaves its loop, read by
     * the producer's wait. Its own field, not a bit in flags: the main
     * thread read-modify-writes flags and a second writer would lose

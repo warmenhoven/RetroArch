@@ -299,3 +299,5 @@ audio_mixer_sound_t *audio_mixer_load_ac3(void *buffer, size_t size)
  * reads the device's transfer granularity from here, and no platform
  * in a harness reports one. */
 struct defaults g_defaults;
+
+bool state_manager_frame_is_reversed(void) { return false; }

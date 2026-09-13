@@ -917,7 +917,6 @@ static bool audio_driver_deinit_internal(bool audio_enable)
    audio_st->sample_accum             = NULL;
    audio_st->pipe_scratch             = NULL;
    audio_st->pipe_conv                = NULL;
-   audio_st->pipe_record_i16          = NULL;
    if (audio_st->pipe_arena)
       memalign_free(audio_st->pipe_arena);
    audio_st->pipe_arena               = NULL;
@@ -3207,15 +3206,10 @@ bool audio_driver_init_internal(void *settings_data, bool audio_cb_inited)
     * in addition to its own. */
    size_t i16_rewind              = AUDIO_ARENA_NEXT(i16_in_scratch,
          max_buffer_samples, AUDIO_ARENA_ALIGN_INT16);
-   size_t i16_pipe_scratch        = AUDIO_ARENA_NEXT(i16_rewind,
-         max_buffer_samples, AUDIO_ARENA_ALIGN_INT16);
+   size_t i16_total               = i16_rewind + max_buffer_samples;
 #else
-   size_t i16_pipe_scratch        = AUDIO_ARENA_NEXT(i16_in_scratch,
-         max_buffer_samples, AUDIO_ARENA_ALIGN_INT16);
+   size_t i16_total               = i16_in_scratch + max_buffer_samples;
 #endif
-   size_t i16_pipe_record         = AUDIO_ARENA_NEXT(i16_pipe_scratch,
-         AUDIO_PIPE_SLICE_INT16S, AUDIO_ARENA_ALIGN_INT16);
-   size_t i16_total               = i16_pipe_record + AUDIO_PIPE_SLICE_INT16S;
    size_t f32_input               = 0;
    size_t f32_synth               = AUDIO_ARENA_NEXT(f32_input,
          max_buffer_samples, AUDIO_ARENA_ALIGN_FLOAT);
@@ -3276,7 +3270,6 @@ bool audio_driver_init_internal(void *settings_data, bool audio_cb_inited)
    audio_driver_st.output_samples_int16_length = outsamples_max * sizeof(int16_t);
    audio_driver_st.sample_accum                = arena_int16 + i16_accum;
    audio_driver_st.data_ptr                    = 0;
-   audio_driver_st.pipe_record_i16             = arena_int16 + i16_pipe_record;
 #ifdef HAVE_REWIND
    audio_driver_st.rewind_buf                  = arena_int16 + i16_rewind;
    audio_driver_st.rewind_size                 = max_buffer_samples;
@@ -4610,19 +4603,8 @@ static void audio_driver_sample_accum_flush(audio_driver_state_t *audio_st)
     * both, the runloop's own flag word only for the first. */
    int snap                        = retro_atomic_load_acquire_int(
          &audio_st->runloop_snapshot);
-   recording_state_t *recording_st = recording_state_get_ptr();
-
-   if (     recording_st->data
-         && recording_st->driver
-         && recording_st->driver->push_audio)
-   {
-      struct record_audio_data ffemu_data;
-
-      ffemu_data.data               = audio_st->sample_accum;
-      ffemu_data.frames             = audio_st->data_ptr / 2;
-
-      recording_st->driver->push_audio(recording_st->data, &ffemu_data);
-   }
+   audio_driver_record_push(audio_st, audio_st->sample_accum,
+         audio_st->data_ptr / 2, 2, AUDIO_LAYOUT_STEREO, false);
 
    if (!(    (snap & AUDIO_SNAP_PAUSED)
          || !(AUDIO_FLAGS_GET(audio_st) & AUDIO_FLAG_ACTIVE)
@@ -6307,48 +6289,17 @@ bool audio_driver_stop(void)
 void audio_driver_frame_is_reverse(void)
 {
    audio_driver_state_t *audio_st  = &audio_driver_st;
-   recording_state_t *recording_st = recording_state_get_ptr();
    uint32_t runloop_flags          = runloop_get_flags();
 
    bool  rewind_float = audio_st->core_float && audio_st->rewind_buf_f;
 
-   /* We just rewound. Flush rewind audio buffer. */
-   if (     recording_st->data
-         && recording_st->driver
-         && recording_st->driver->push_audio)
-   {
-      struct record_audio_data ffemu_data;
-
-      if (rewind_float)
-      {
-         /* The recorder takes int16: the float reverse buffer is
-          * converted into its staging a pass at a time, only now. */
-         size_t at = audio_st->rewind_ptr;
-         while (at < audio_st->rewind_size && audio_st->pipe_record_i16)
-         {
-            size_t n = audio_st->rewind_size - at;
-            if (n > AUDIO_PIPE_SLICE_INT16S)
-               n = AUDIO_PIPE_SLICE_INT16S;
-            convert_float_to_s16(audio_st->pipe_record_i16,
-                  audio_st->rewind_buf_f + at, n);
-            ffemu_data.data   = audio_st->pipe_record_i16;
-            ffemu_data.frames = n / 2;
-            recording_st->driver->push_audio(recording_st->data, &ffemu_data);
-            at += n;
-         }
-      }
-      else
-      {
-         ffemu_data.data              = audio_st->rewind_buf +
-            audio_st->rewind_ptr;
-         ffemu_data.frames            = (audio_st->rewind_size -
-               audio_st->rewind_ptr) / 2;
-
-         recording_st->driver->push_audio(
-               recording_st->data,
-               &ffemu_data);
-      }
-   }
+   if (audio_st->rewind_size > audio_st->rewind_ptr
+         && (rewind_float || audio_st->rewind_buf))
+      audio_driver_record_push(audio_st,
+            rewind_float ? (const void*)(audio_st->rewind_buf_f + audio_st->rewind_ptr)
+                         : (const void*)(audio_st->rewind_buf + audio_st->rewind_ptr),
+            (audio_st->rewind_size - audio_st->rewind_ptr) / 2,
+            2, AUDIO_LAYOUT_STEREO, rewind_float);
 
    if (!(
              (runloop_flags & RUNLOOP_FLAG_PAUSED)

@@ -859,6 +859,55 @@ static void full_wide_ring_case(bool floating)
 
 }
 
+static void record_stereo_entry_case(unsigned kind, uint32_t layout)
+{
+   size_t frames = kind ? 2053 : 1024, offset = kind ? 14 : 0, i;
+   audio_driver_state_t *st = &audio_driver_st;
+   recording_state_t *rs = recording_state_get_ptr();
+   int16_t *input = (int16_t*)malloc((frames * 2 + offset) * sizeof(int16_t));
+   float *input_f = (float*)malloc((frames * 2 + offset) * sizeof(float));
+   int16_t *narrow = (int16_t*)malloc(frames * 2 * sizeof(int16_t));
+   int16_t *expected = (int16_t*)malloc(frames * 8 * sizeof(int16_t));
+   CHECK(input && input_f && narrow && expected, "record entry buffers");
+   if (!input || !input_f || !narrow || !expected) goto end;
+   CHECK(up(kind == 2, AUDIO_LAYOUT_STEREO, true), "record entry stand-up");
+   AUDIO_FLAGS_CLEAR(st, AUDIO_FLAG_ACTIVE);
+   free(rec_cap); rec_cap = NULL; rec_cap_frames = rec_frames = 0;
+   rs->driver = &rec_driver; rs->data = rs; rs->layout = layout;
+   rs->channels = rec_channels = audio_layout_channels(layout);
+   for (i = 0; i < frames * 2 + offset; i++)
+   {
+      input[i] = (int16_t)((int)(i * 7919 % 65536) - 32768);
+      input_f[i] = input[i] / 16384.0f;
+   }
+   if (kind == 2) convert_float_to_s16(narrow, input_f + offset, frames * 2);
+   else memcpy(narrow, input + offset, frames * 2 * sizeof(int16_t));
+   audio_layout_remap_s16(expected, layout, narrow, AUDIO_LAYOUT_STEREO, frames);
+   if (!kind)
+   {
+      st->sample_accum = input; st->data_ptr = frames * 2;
+      audio_driver_sample_accum_flush(st);
+      CHECK(st->data_ptr == 0, "accumulator was not emptied");
+      st->sample_accum = NULL;
+   }
+   else
+   {
+      st->rewind_buf = input; st->rewind_buf_f = kind == 2 ? input_f : NULL;
+      st->rewind_ptr = offset; st->rewind_size = frames * 2 + offset;
+      audio_driver_frame_is_reverse();
+      st->rewind_buf = NULL; st->rewind_buf_f = NULL;
+      st->rewind_ptr = st->rewind_size = 0;
+   }
+   CHECK(rec_frames == frames, "record entry lost frames");
+   if (rec_frames == frames)
+      CHECK(!memcmp(rec_cap, expected, frames * rec_channels * sizeof(int16_t)),
+            "record entry did not map stereo to the recorder layout");
+   CHECK(st->record_remap_frames <= 1024 * rec_channels, "record entry staging is unbounded");
+   rs->driver = NULL; rs->data = NULL;
+end:
+   free(expected); free(narrow); free(input_f); free(input);
+}
+
 int main(void)
 {
    /* One case at a time, for when a single one is being worked on:
@@ -888,6 +937,15 @@ int main(void)
    RUN("threaded", threaded_case(false, false));
    RUN("threaded", stereo_on_wide_ring_case());
    RUN("record",   record_case());
+   RUN("recordentry", record_stereo_entry_case(0, AUDIO_LAYOUT_STEREO));
+   RUN("recordentry", record_stereo_entry_case(0, AUDIO_LAYOUT_5POINT1));
+   RUN("recordentry", record_stereo_entry_case(0, AUDIO_LAYOUT_7POINT1));
+   RUN("recordentry", record_stereo_entry_case(1, AUDIO_LAYOUT_STEREO));
+   RUN("recordentry", record_stereo_entry_case(1, AUDIO_LAYOUT_5POINT1));
+   RUN("recordentry", record_stereo_entry_case(1, AUDIO_LAYOUT_7POINT1));
+   RUN("recordentry", record_stereo_entry_case(2, AUDIO_LAYOUT_STEREO));
+   RUN("recordentry", record_stereo_entry_case(2, AUDIO_LAYOUT_5POINT1));
+   RUN("recordentry", record_stereo_entry_case(2, AUDIO_LAYOUT_7POINT1));
    RUN("ac3",      ac3_bitstream_case());
    RUN("virtual",  virtual_surround_case());
    RUN("fold",     fold_case());
