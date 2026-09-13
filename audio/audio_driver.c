@@ -632,10 +632,12 @@ static bool audio_driver_extra_prepare(audio_driver_state_t *audio_st,
    /* The front pair's ratio bound must also fit every extra pair. */
    if (cap_out < front_cap)
       cap_out = front_cap;
-   if (channels != audio_st->extra.channels || positions != audio_st->extra.positions
+   if (!channels || channels != audio_st->extra.channels || positions != audio_st->extra.positions
          || int16_path != audio_st->extra.res_int16 || nres != audio_st->extra.nres)
    {
       audio_driver_extra_free(audio_st);
+      if (!channels || channels > 2 * ARRAY_SIZE(audio_st->extra.res))
+         return false;
       audio_st->extra.channels  = channels;
       audio_st->extra.positions = positions;
       audio_st->extra.nres      = nres;
@@ -660,6 +662,14 @@ static bool audio_driver_extra_prepare(audio_driver_state_t *audio_st,
    }
    if (frames > audio_st->extra.cap_in)
    {
+      size_t width = channels > 2 ? channels : 2;
+      if (frames > ((size_t)-1 - 1024) / 4
+            || frames > (size_t)-1 / width / sizeof(float)
+            || cap_out > (size_t)-1 / width / sizeof(float))
+      {
+         audio_driver_extra_free(audio_st);
+         return false;
+      }
       free(audio_st->extra.in_f);
       free(audio_st->extra.in_i);
       free(audio_st->extra.pair_in);
@@ -677,6 +687,12 @@ static bool audio_driver_extra_prepare(audio_driver_state_t *audio_st,
    }
    if (cap_out > audio_st->extra.cap_out)
    {
+      size_t width = channels > 2 ? channels : 2;
+      if (cap_out > (size_t)-1 / width / sizeof(float))
+      {
+         audio_driver_extra_free(audio_st);
+         return false;
+      }
       free(audio_st->extra.pair_out);
       free(audio_st->extra.pair_out_i);
       free(audio_st->extra.out_f);

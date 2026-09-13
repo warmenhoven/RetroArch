@@ -9,7 +9,7 @@ static void *tracked_malloc(size_t size)
    unsigned i;
    void *p;
    heap_calls++;
-   if (fail_at && heap_calls == fail_at) return NULL;
+   if (fail_at && (heap_calls == fail_at || size > 1024 * 1024)) return NULL;
    p = malloc(size);
    if (!p) return NULL;
    for (i = 0; i < 128; i++)
@@ -446,6 +446,64 @@ static void check_scratch_lifecycle(void)
    }
 }
 
+static void check_size_limits(void)
+{
+   static audio_driver_state_t st;
+   const size_t counts[] = {
+      (size_t)-1, ((size_t)-1 - 1024) / 4 + 1,
+      (size_t)-1 / (8 * sizeof(float)) + 1,
+      ((size_t)-1 / (8 * sizeof(float)) - 1024) / 4 + 1
+   };
+   const unsigned channels[] = {0, 9, (unsigned)-1};
+   unsigned lane, i, before;
+   for (lane = 0; lane < 2; lane++)
+   {
+      memset(&st, 0, sizeof(st));
+      st.resampler = &sinc_resampler;
+      st.resampler_quality = RESAMPLER_QUALITY_NORMAL;
+      st.src_ratio_orig = 1;
+      st.resampler_int16_free = sinc_resampler_int16_free;
+      st.resampler_int16_process = sinc_resampler_int16_process;
+      before = heap_calls;
+      CHECK(!audio_driver_extra_prepare(&st, 0, 0, 32, !lane, lane));
+      CHECK(heap_calls == before && live_allocations() == 0);
+      for (i = 0; i < sizeof(channels) / sizeof(channels[0]); i++)
+      {
+         CHECK(audio_driver_extra_prepare(&st, 2, 0, 32, !lane, lane));
+         before = heap_calls;
+         CHECK(!audio_driver_extra_prepare(&st, channels[i], 0, 32, !lane, lane));
+         CHECK(heap_calls == before);
+         CHECK(st.extra.channels == 0 && live_allocations() == 0);
+      }
+      for (i = 0; i < sizeof(counts) / sizeof(counts[0]); i++)
+      {
+         CHECK(audio_driver_extra_prepare(&st, 8, 0, 32, !lane, lane));
+         /* Keep the test allocator from attempting enormous requests if
+          * this fixture is run against code without the guards. */
+         before = heap_calls;
+         fail_at = before + 1;
+         CHECK(!audio_driver_extra_prepare(&st, 8, 0, counts[i], !lane, lane));
+         fail_at = 0;
+         CHECK(heap_calls == before);
+         CHECK(st.extra.channels == 0 && live_allocations() == 0);
+      }
+      CHECK(audio_driver_extra_prepare(&st, 8, 0, 32, !lane, lane));
+      before = heap_calls;
+      st.output_samples_buf_length = (size_t)-1;
+      st.output_samples_int16_length = (size_t)-1;
+      CHECK(!audio_driver_extra_prepare(&st, 8, 0, 32, !lane, lane));
+      CHECK(heap_calls == before);
+      CHECK(st.extra.channels == 0 && live_allocations() == 0);
+      st.output_samples_buf_length = 0;
+      st.output_samples_int16_length = 0;
+      CHECK(audio_driver_extra_prepare(&st, 8, 0, 32, !lane, lane));
+      before = heap_calls;
+      CHECK(audio_driver_extra_prepare(&st, 8, 0, 32, !lane, lane));
+      CHECK(heap_calls == before);
+      audio_driver_extra_free(&st);
+   }
+}
+
 int main(void)
 {
    check_lane(0);
@@ -454,6 +512,7 @@ int main(void)
    check_direct_bypass();
    check_direct_pair();
    check_scratch_lifecycle();
+   check_size_limits();
    CHECK(live_allocations() == 0);
    printf("extra capacity: %u failures\n", failures);
    return failures != 0;
