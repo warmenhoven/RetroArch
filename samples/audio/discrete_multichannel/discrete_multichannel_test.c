@@ -1277,6 +1277,118 @@ static void canonical_prefix_case(void)
    for (i = 0; i < sizeof(output); i++) CHECK(output[i] == 0xa5, "rejected prefix changed output");
 }
 
+static void resampler_discontinuity_case(unsigned backend, bool floating,
+      unsigned scenario, bool hq)
+{
+   static const char *names[] = { "sinc", "nearest", "cc" };
+   union { float f[128 * 6]; int16_t i[128 * 6]; } input;
+   float reference[2048 * 6];
+   size_t reference_frames = 0, f;
+   unsigned dirty;
+   bool sync = config_get_ptr()->bools.audio_sync;
+   audio_driver_state_t *st = &audio_driver_st;
+   for (dirty = 0; dirty < 2; dirty++)
+   {
+      void *front, *native, *extras[4];
+      unsigned i;
+      bool ready = pipe_up(floating, floating);
+      CHECK(ready, "reset stand-up");
+      if (!ready) return;
+      st->src_ratio_orig = st->src_ratio_curr = hq ? 2.0 : 48000.0 / 44100.0;
+      st->resampler_hq = hq && backend == 0;
+      strcpy(st->resampler_ident, names[backend]);
+      CHECK(retro_resampler_realloc_hq(&st->resampler_data, &st->resampler,
+            names[backend], st->resampler_quality, st->src_ratio_orig,
+            st->resampler_hq), "reset float backend");
+      if (!floating)
+      {
+         config_get_ptr()->bools.audio_fastpath_s16 = true;
+         st->resampler_data_int16 = audio_driver_int16_resampler_new(st);
+         st->resampler_int16_process = backend == 0 ? sinc_resampler_int16_process
+            : backend == 1 ? nearest_resampler_int16_process : cc_resampler_int16_process;
+         st->resampler_int16_free = backend == 0 ? sinc_resampler_int16_free
+            : backend == 1 ? nearest_resampler_int16_free : cc_resampler_int16_free;
+         st->resampler_int16_reset = backend == 0 ? sinc_resampler_int16_reset
+            : backend == 1 ? nearest_resampler_int16_reset : cc_resampler_int16_reset;
+         CHECK(st->resampler_data_int16 != NULL, "reset native backend");
+      }
+      config_get_ptr()->bools.audio_sync = true;
+      if (dirty)
+      {
+         for (f = 0; f < 128 * 6; f++)
+            if (floating) input.f[f] = (float)(f % 6 + 1) / 16.0f;
+            else input.i[f] = (int16_t)((f % 6 + 1) * 2048);
+         CHECK(audio_driver_multi_pipe(st, &input, 128, 6, AUDIO_LAYOUT_5POINT1, floating), "reset warm publish");
+         audio_driver_pipeline_consume(st);
+         CHECK(st->extra.nres == 2 && st->extra.res_int16 == !floating,
+               "reset did not warm native extra lanes");
+         front = st->resampler_data; native = st->resampler_data_int16;
+         for (i = 0; i < 4; i++) extras[i] = st->extra.res[i];
+         if (scenario == 0 || scenario == 1)
+         {
+            CHECK(audio_driver_multi_pipe(st, &input, 128, 6, AUDIO_LAYOUT_5POINT1, floating), "reset discard publish");
+            if (scenario == 0)
+            {
+               config_get_ptr()->bools.audio_sync = false;
+               st->buffer_size = 0;
+               scripted_threaded.underruns = epoch_underrun;
+            }
+            else retro_atomic_store_release_int(&st->runloop_snapshot, AUDIO_SNAP_PAUSED);
+            audio_driver_pipeline_consume(st);
+            CHECK(!retro_spsc_read_avail(&st->pipe_ring), "reset did not discard source");
+         }
+         else if (scenario == 2)
+         {
+            st->pipe_pending = (const uint8_t*)st->output_samples_buf;
+            st->pipe_pending_bytes = 6 * sizeof(float);
+            retro_atomic_store_release_int(&st->runloop_snapshot, AUDIO_SNAP_PAUSED);
+            audio_driver_pipeline_consume(st);
+            CHECK(!st->pipe_pending_bytes, "reset retained pending output");
+         }
+         else CHECK(audio_driver_stop(), "reset stop failed");
+         CHECK(front == st->resampler_data && native == st->resampler_data_int16,
+               "reset replaced primary resamplers");
+         for (i = 0; i < 4; i++) CHECK(extras[i] == st->extra.res[i], "reset replaced extra lane");
+         scripted_threaded.underruns = NULL;
+         config_get_ptr()->bools.audio_sync = true;
+         retro_atomic_store_release_int(&st->runloop_snapshot, 0);
+         AUDIO_FLAGS_SET(st, AUDIO_FLAG_STARTED);
+      }
+      cap_frames = 0;
+      memset(&input, 0, sizeof(input));
+      CHECK(audio_driver_multi_pipe(st, &input, 128, 6, AUDIO_LAYOUT_5POINT1, floating), "reset fresh publish");
+      audio_driver_pipeline_consume(st);
+      CHECK(cap_frames > 0 && cap_frames <= 2048, "reset output count");
+      if (!dirty)
+      {
+         reference_frames = cap_frames;
+         if (cap_frames <= 2048) memcpy(reference, cap, cap_frames * 6 * sizeof(float));
+      }
+      else
+      {
+         CHECK(cap_frames == reference_frames, "reset %s/%u/%u/%u phase differs", names[backend], floating, scenario, hq);
+         if (cap_frames == reference_frames && cap_frames <= 2048)
+            CHECK(!memcmp(reference, cap, cap_frames * 6 * sizeof(float)),
+                  "reset %s/%u/%u/%u leaked pre-gap samples", names[backend], floating, scenario, hq);
+      }
+   }
+   config_get_ptr()->bools.audio_fastpath_s16 = false;
+   config_get_ptr()->bools.audio_sync = sync;
+}
+
+static void resampler_discontinuity_cases(void)
+{
+   unsigned backend, floating, scenario, hq;
+   unsigned before = failures;
+   for (backend = 0; backend < 3; backend++)
+      for (floating = 0; floating < 2; floating++)
+         for (scenario = 0; scenario < 4; scenario++)
+            for (hq = 0; hq < 2; hq++)
+               resampler_discontinuity_case(backend, floating, scenario, hq);
+   printf("   native SRC discontinuities: 48 cases, %u failures\n", failures - before);
+}
+
+
 int main(void)
 {
    /* One case at a time, for when a single one is being worked on:
@@ -1284,6 +1396,7 @@ int main(void)
    const char *only = getenv("DM_ONLY");
 #define RUN(tag, call) do { if (!only || strstr(only, tag)) { call; } } while (0)
    printf("discrete multi-channel:\n");
+   RUN("srcreset", resampler_discontinuity_cases());
    RUN("suspended", suspended_multichannel_case(true, true));
    RUN("suspended", suspended_multichannel_case(false, true));
    RUN("suspended", suspended_multichannel_case(true, false));

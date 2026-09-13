@@ -23,6 +23,8 @@ SOURCES_C := \
 	$(LIBRETRO_COMM_DIR)/formats/iec61937/iec61937.c \
 	$(LIBRETRO_COMM_DIR)/queues/fifo_queue.c \
 	stubs_retroarch.c \
+	../../../audio/drivers_resampler/cc_resampler.c \
+	../../../audio/drivers_resampler/cc_resampler_int16.c \
 	../../../audio/audio_upmix.c \
 	../../../audio/audio_binaural.c \
 	$(LIBRETRO_COMM_DIR)/lists/string_list.c \
@@ -55,7 +57,7 @@ SOURCES_C := \
 
 CFLAGS += -Wall $(INCDIRS)
 CFLAGS += -I../wasapi_exclusive_pacing -DHAVE_WASAPI -DHAVE_RAC3 -DRARCH_INTERNAL -DHAVE_THREADS -DHAVE_AUDIOMIXER -DHAVE_MENU \
-	-DHAVE_CONFIGFILE -DHAVE_REWIND -D_GNU_SOURCE
+	-DHAVE_CC_RESAMPLER -DHAVE_NEAREST_RESAMPLER -DHAVE_CONFIGFILE -DHAVE_REWIND -D_GNU_SOURCE
 LDFLAGS += -lm -lpthread
 
 ifneq ($(SAN),)

@@ -540,6 +540,7 @@ static void audio_driver_deinit_resampler(void)
    audio_st->resampler_data_int16 = NULL;
    audio_st->resampler_int16_process = NULL;
    audio_st->resampler_int16_free    = NULL;
+   audio_st->resampler_int16_reset   = NULL;
    audio_st->resampler_ident[0] = '\0';
    audio_st->resampler_quality  = RESAMPLER_QUALITY_DONTCARE;
    audio_st->resampler_hq       = false;
@@ -734,6 +735,34 @@ static bool audio_driver_extra_prepare(audio_driver_state_t *audio_st,
    audio_st->extra.is_float  = is_float;
    audio_st->extra.in_frames = frames;
    return true;
+}
+
+/* Consumer-owned, or called after the wrapper has parked the consumer. */
+static void audio_driver_reset_resamplers(audio_driver_state_t *audio_st)
+{
+   unsigned i;
+   if (audio_st->resampler && audio_st->resampler->reset)
+   {
+      if (audio_st->resampler_data)
+         audio_st->resampler->reset(audio_st->resampler_data);
+      if (!audio_st->extra.res_int16)
+         for (i = 0; i < audio_st->extra.nres; i++)
+            if (audio_st->extra.res[i])
+               audio_st->resampler->reset(audio_st->extra.res[i]);
+   }
+   if (audio_st->resampler_int16_reset)
+   {
+      if (audio_st->resampler_data_int16)
+         audio_st->resampler_int16_reset(audio_st->resampler_data_int16);
+      if (audio_st->extra.res_int16)
+         for (i = 0; i < audio_st->extra.nres; i++)
+            if (audio_st->extra.res[i])
+               audio_st->resampler_int16_reset(audio_st->extra.res[i]);
+   }
+   audio_st->resampler_bypassed = false;
+   audio_st->extra.bypassed = false;
+   audio_st->extra.pending = false;
+   audio_st->extra.out_frames = 0;
 }
 
 /* The extras through their resamplers, in pairs, at the front pair's
@@ -3649,6 +3678,7 @@ bool audio_driver_init_internal(void *settings_data, bool audio_cb_inited)
    audio_driver_st.resampler_data_int16  = NULL;
    audio_driver_st.resampler_int16_process = NULL;
    audio_driver_st.resampler_int16_free    = NULL;
+   audio_driver_st.resampler_int16_reset   = NULL;
    if (     audio_driver_st.resampler
          && audio_driver_st.resampler->short_ident)
    {
@@ -3661,6 +3691,7 @@ bool audio_driver_init_internal(void *settings_data, bool audio_cb_inited)
                audio_driver_st.resampler_hq);
          audio_driver_st.resampler_int16_process = sinc_resampler_int16_process;
          audio_driver_st.resampler_int16_free    = sinc_resampler_int16_free;
+         audio_driver_st.resampler_int16_reset   = sinc_resampler_int16_reset;
       }
 #ifdef HAVE_NEAREST_RESAMPLER
       else if (string_is_equal(rs_ident, "nearest"))
@@ -3668,6 +3699,7 @@ bool audio_driver_init_internal(void *settings_data, bool audio_cb_inited)
          audio_driver_st.resampler_data_int16 = nearest_resampler_int16_init();
          audio_driver_st.resampler_int16_process = nearest_resampler_int16_process;
          audio_driver_st.resampler_int16_free    = nearest_resampler_int16_free;
+         audio_driver_st.resampler_int16_reset   = nearest_resampler_int16_reset;
       }
 #endif
 #ifdef HAVE_CC_RESAMPLER
@@ -3677,6 +3709,7 @@ bool audio_driver_init_internal(void *settings_data, bool audio_cb_inited)
                audio_driver_st.src_ratio_orig);
          audio_driver_st.resampler_int16_process = cc_resampler_int16_process;
          audio_driver_st.resampler_int16_free    = cc_resampler_int16_free;
+         audio_driver_st.resampler_int16_reset   = cc_resampler_int16_reset;
       }
 #endif
       if (audio_driver_st.resampler_int16_process)
@@ -4314,6 +4347,9 @@ static void audio_driver_pipeline_retry(audio_driver_state_t *audio_st)
    {
       audio_st->pipe_pending = NULL;
       audio_st->pipe_pending_bytes = 0;
+      audio_driver_state_lock();
+      audio_driver_reset_resamplers(audio_st);
+      audio_driver_state_unlock();
       return;
    }
    else
@@ -4511,6 +4547,7 @@ static void audio_driver_pipeline_consume(audio_driver_state_t *audio_st)
       {
          size_t target = audio_driver_pipe_target_frames(audio_st) * audio_st->pipe_frame_bytes;
          size_t held   = retro_spsc_read_avail(&audio_st->pipe_ring);
+         bool discarded = false;
          audio_st->pipe_underruns_seen = seen;
          while (held > target)
          {
@@ -4522,6 +4559,13 @@ static void audio_driver_pipeline_consume(audio_driver_state_t *audio_st)
             if (!retro_spsc_skip(&audio_st->pipe_ring, take))
                break;
             held -= take;
+            discarded = true;
+         }
+         if (discarded)
+         {
+            audio_driver_state_lock();
+            audio_driver_reset_resamplers(audio_st);
+            audio_driver_state_unlock();
          }
          if (have > held / audio_st->pipe_frame_bytes)
             have = held / audio_st->pipe_frame_bytes;
@@ -4557,6 +4601,9 @@ static void audio_driver_pipeline_consume(audio_driver_state_t *audio_st)
        * dropped so the ring keeps flowing for the producer.  Skipped
        * in place - nothing reads it, so nothing needs the copy. */
       retro_spsc_skip(&audio_st->pipe_ring, have * audio_st->pipe_frame_bytes);
+      audio_driver_state_lock();
+      audio_driver_reset_resamplers(audio_st);
+      audio_driver_state_unlock();
       slock_lock(audio_st->pipe_lock);
       audio_st->pipe_gen++;
       scond_signal(audio_st->pipe_cond);
@@ -6467,6 +6514,9 @@ bool audio_driver_stop(void)
       /* The wrapper has parked the consumer before returning from stop. */
       audio_st->pipe_pending = NULL;
       audio_st->pipe_pending_bytes = 0;
+      audio_driver_state_lock();
+      audio_driver_reset_resamplers(audio_st);
+      audio_driver_state_unlock();
       AUDIO_FLAGS_CLEAR(audio_st, AUDIO_FLAG_STARTED);
       RARCH_DBG("[Audio] Stopped audio driver \"%s\".\n", audio->ident);
    }

@@ -855,6 +855,7 @@ typedef struct
    /* Consumer-owned view into output scratch until a short write completes. */
    const uint8_t *pipe_pending;
    size_t pipe_pending_bytes;
+   void (*resampler_int16_reset)(void *);
 } audio_driver_state_t;
 
 bool audio_driver_enable_callback(void);
