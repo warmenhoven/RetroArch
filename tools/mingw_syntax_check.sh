@@ -136,6 +136,17 @@ for f in $FILES; do
    # statements reached master in ui_win32_companion.c.
    cc89="$C89CC"
    c89defs=""
+   # The OpenGL core driver is built only where slang is: configure
+   # turns HAVE_OPENGL_CORE off when slang is off (check_enabled SLANG
+   # OPENGL_CORE in qb/config.libs.sh), so checking it without
+   # HAVE_SLANG checks a configuration no build produces - and it fails,
+   # because the members it names are declared behind that guard. Give
+   # it the pairing the real builds have.
+   case "$f" in
+      *gl3.c|*shader_gl3.c|*slang_process.c|*glslang_util.c)
+         c89defs="-DHAVE_SLANG -DHAVE_SPIRV_CROSS -DHAVE_OPENGL_CORE"
+         ;;
+   esac
    case "$f" in
       *win32*|*dinput*|*xinput*|*wasapi*|*xaudio*|*asio*|*dsound*|*d3d*|*dxgi*|*wgl*|*uwp*|*winraw*|*_w.c|*/w_*)
          if [ -n "$C89CC_WIN32" ]; then
