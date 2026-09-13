@@ -614,8 +614,19 @@ static bool glslang_read_shader_file_internal(const char *path,
       struct shader_line_buf *output, bool root_file, bool is_optional,
       struct slang_include_cache *cache, bool pragmas_only)
 {
-   char tmp[PATH_MAX_LENGTH];
-   char line_suffix[PATH_MAX_LENGTH]; /* precomputed: " \"basename\"" */
+   /* Off the frame: this function recurses once per level of include
+    * nesting, and three PATH_MAX_LENGTH arrays cost every level six
+    * kilobytes of stack. On the heap they cost the same per level but
+    * unwind with it, and the frame that holds them is a few hundred
+    * bytes rather than past what this tree allows. */
+   struct
+   {
+      char tmp[PATH_MAX_LENGTH];
+      char line_suffix[PATH_MAX_LENGTH]; /* precomputed: " \"basename\"" */
+      char include_path[PATH_MAX_LENGTH];
+   } *scratch = NULL;
+   char *tmp;
+   char *line_suffix;
    size_t line_suffix_len = 0;
    const char *basename      = NULL;
    const uint8_t *buf        = NULL;
@@ -633,8 +644,6 @@ static bool glslang_read_shader_file_internal(const char *path,
    bool    capture           = false;
    bool    nested            = false;
 
-   tmp[0] = '\0';
-
    /* Sanity check */
    if (!path || path[0] == '\0' || !output)
       return false;
@@ -643,6 +652,13 @@ static bool glslang_read_shader_file_internal(const char *path,
 
    if (!basename || basename[0] == '\0')
       return false;
+
+   if (!(scratch = (void*)malloc(sizeof(*scratch))))
+      return false;
+
+   tmp         = scratch->tmp;
+   line_suffix = scratch->line_suffix;
+   tmp[0]      = '\0';
 
    /* An include expands to the same lines wherever it appears: the
     * '#line' directive that returns to the parent's position is
@@ -673,7 +689,7 @@ static bool glslang_read_shader_file_internal(const char *path,
 
    /* Precompute the #line directive suffix: ' "basename"'
     * so the inner loop only needs to write the line number. */
-   line_suffix_len = (size_t)snprintf(line_suffix, sizeof(line_suffix),
+   line_suffix_len = (size_t)snprintf(line_suffix, PATH_MAX_LENGTH,
          " \"%s\"", basename);
 
    /* Read file contents (served from this root read's cache when the
@@ -682,6 +698,7 @@ static bool glslang_read_shader_file_internal(const char *path,
    {
       if (!is_optional)
          RARCH_ERR("[Slang] Failed to open shader file: \"%s\".\n", path);
+      free(scratch);
       return false;
    }
 
@@ -787,7 +804,7 @@ static bool glslang_read_shader_file_internal(const char *path,
                   if (!emit_feature_defines(output))
                      goto cleanup;
 
-                  line_len = build_line_directive(tmp, sizeof(tmp),
+                  line_len = build_line_directive(tmp, PATH_MAX_LENGTH,
                         2u, line_suffix, line_suffix_len);
                   if (!shader_line_buf_append(output, tmp, line_len))
                      goto cleanup;
@@ -805,7 +822,7 @@ static bool glslang_read_shader_file_internal(const char *path,
                if (!emit_feature_defines(output))
                   goto cleanup;
 
-               line_len = build_line_directive(tmp, sizeof(tmp),
+               line_len = build_line_directive(tmp, PATH_MAX_LENGTH,
                      root_file ? 2u : 1u, line_suffix, line_suffix_len);
                if (!shader_line_buf_append(output, tmp, line_len))
                   goto cleanup;
@@ -831,14 +848,9 @@ static bool glslang_read_shader_file_internal(const char *path,
                   && !memcmp("#include ", line_start, sizeof("#include ")-1))
                   || include_optional)
             {
-               char include_path[PATH_MAX_LENGTH];
-               /* tmp is free here: its only use is the #line directive
-                * built after the recursive call below, so the include
-                * name can borrow it instead of costing this frame a
-                * third PATH_MAX_LENGTH array - this function recurses
-                * once per level of include nesting. */
+               char *include_path = scratch->include_path;
                if (   !slang_get_include_file(line_start, cur_line_len,
-                           tmp, sizeof(tmp))
+                           tmp, PATH_MAX_LENGTH)
                    || tmp[0] == '\0')
                {
                   RARCH_ERR("[Slang] Invalid include statement \"%.*s\".\n",
@@ -848,7 +860,7 @@ static bool glslang_read_shader_file_internal(const char *path,
 
                include_path[0] = '\0';
                if (!video_shader_source_resolve(path, tmp,
-                        include_path, sizeof(include_path)))
+                        include_path, PATH_MAX_LENGTH))
                {
                   RARCH_ERR("[Slang] Could not resolve include \"%s\".\n",
                         tmp);
@@ -867,7 +879,7 @@ static bool glslang_read_shader_file_internal(const char *path,
 
                if (!pragmas_only)
                {
-                  line_len = build_line_directive(tmp, sizeof(tmp),
+                  line_len = build_line_directive(tmp, PATH_MAX_LENGTH,
                         (unsigned)(line_idx + 1), line_suffix,
                         line_suffix_len);
                   if (!shader_line_buf_append(output, tmp, line_len))
@@ -887,7 +899,7 @@ static bool glslang_read_shader_file_internal(const char *path,
                      goto cleanup;
                if (!pragmas_only)
                {
-                  line_len = build_line_directive(tmp, sizeof(tmp),
+                  line_len = build_line_directive(tmp, PATH_MAX_LENGTH,
                         (unsigned)(line_idx + 2), line_suffix,
                         line_suffix_len);
                   if (!shader_line_buf_append(output, tmp, line_len))
@@ -912,6 +924,7 @@ static bool glslang_read_shader_file_internal(const char *path,
    ret = true;
 
 cleanup:
+   free(scratch);
    /* Re-find rather than hold a pointer: a nested include may have
     * grown the entry array out from under one taken above. */
    /* A file that includes others is captured in pragma-only form as
