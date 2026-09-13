@@ -7652,7 +7652,7 @@ static int generic_menu_iterate(
                                  core_list
                               && path
                               && core_updater_list_get_filename(core_list,
-                                 path, entry)
+                                 path, &entry)
                               && (entry->description && *entry->description)
                            )
                            strlcpy(menu->menu_state_msg, entry->description,
