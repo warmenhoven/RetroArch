@@ -24,8 +24,39 @@
 #include <formats/iec61937.h>
 #include "fake_wasapi.h"
 
-#include "../../../audio/audio_driver.c"
+#include <memalign.h>
 #include "../../../audio/audio_pipeline_stretch.h"
+static bool transport_fail_output, transport_fail_stage, transport_track;
+static unsigned transport_allocations, transport_frees;
+static void *transport_test_alloc(size_t alignment, size_t size)
+{
+   void *p;
+   if (transport_fail_output) return NULL;
+   p = memalign_alloc(alignment, size);
+   if (p && transport_track) transport_allocations++;
+   return p;
+}
+static void transport_test_free(void *p)
+{
+   if (p && transport_track) transport_frees++;
+   memalign_free(p);
+}
+static audio_pipeline_stretch_t *transport_test_new(unsigned rate,
+      unsigned channels, bool floating, uint32_t search,
+      retro_spsc_t *ring, audio_pipeline_layout_t *metadata,
+      void *output, size_t frames)
+{
+   if (transport_fail_stage) return NULL;
+   return audio_pipeline_stretch_new(rate, channels, floating, search,
+         ring, metadata, output, frames);
+}
+#define memalign_alloc transport_test_alloc
+#define memalign_free transport_test_free
+#define audio_pipeline_stretch_new transport_test_new
+#include "../../../audio/audio_driver.c"
+#undef memalign_alloc
+#undef memalign_free
+#undef audio_pipeline_stretch_new
 
 extern audio_driver_t audio_wasapi;
 
@@ -1434,8 +1465,14 @@ static size_t native_render_case(bool floating, bool wide, bool hq, bool filter)
          st->resampler_int16_reset = sinc_resampler_int16_reset;
          CHECK(st->resampler_data_int16 != NULL, "native renderer integer SRC");
       }
-      stage = audio_pipeline_stretch_new(48000, channels, floating, 1,
-            &st->pipe_ring, &st->pipe_layouts, &output, 257);
+      if (fragmented)
+      {
+         CHECK(audio_driver_pipeline_transport_prepare(48000, 1), "owned transport prepare");
+         stage = st->pipe_transport;
+      }
+      else
+         stage = audio_pipeline_stretch_new(48000, channels, floating, 1,
+               &st->pipe_ring, &st->pipe_layouts, &output, 257);
       CHECK(stage != NULL, "native renderer stage");
       if (!stage) { free(reference); return 0; }
       for (segment = 0; segment < 4; segment++)
@@ -1476,20 +1513,20 @@ static size_t native_render_case(bool floating, bool wide, bool hq, bool filter)
             {
                size_t events = retro_atomic_load_relaxed_size(&st->pipe_layouts.tail);
                short_no_room = true;
-               CHECK(audio_driver_pipeline_transport_step(stage, &serial, 71, 37,
+               CHECK(audio_driver_pipeline_transport_step(stage, &st->pipe_transport_serial, 71, 37,
                         false, &complete), "transport wait rejection");
                CHECK(tail == retro_atomic_load_relaxed_size(&st->pipe_ring.tail)
                      && events == retro_atomic_load_relaxed_size(&st->pipe_layouts.tail)
-                     && !serial && !cap_frames, "failed device wait advanced transport");
+                     && !st->pipe_transport_serial && !cap_frames, "failed device wait advanced transport");
                short_no_room = false;
                retro_atomic_store_release_int(&st->runloop_snapshot, AUDIO_SNAP_PAUSED);
-               CHECK(!audio_driver_pipeline_transport_step(stage, &serial, 71, 37,
+               CHECK(!audio_driver_pipeline_transport_step(stage, &st->pipe_transport_serial, 71, 37,
                         false, &complete), "paused transport must defer to lifecycle owner");
                CHECK(tail == retro_atomic_load_relaxed_size(&st->pipe_ring.tail)
                      && events == retro_atomic_load_relaxed_size(&st->pipe_layouts.tail),
                      "paused transport advanced source/control");
                retro_atomic_store_release_int(&st->runloop_snapshot, 0);
-               CHECK(audio_driver_pipeline_transport_step(stage, &serial, 71, 0,
+               CHECK(audio_driver_pipeline_transport_step(stage, &st->pipe_transport_serial, 71, 0,
                         false, &complete), "transport zero budget");
                CHECK(tail == retro_atomic_load_relaxed_size(&st->pipe_ring.tail),
                      "zero output budget consumed input");
@@ -1500,7 +1537,7 @@ static size_t native_render_case(bool floating, bool wide, bool hq, bool filter)
             retro_atomic_store_release_int(&st->runloop_snapshot,
                   AUDIO_SNAP_SLOWMOTION | AUDIO_SNAP_FASTMOTION);
             retro_atomic_store_release_int(&st->pipe_ff_mult_q16, 3 * 65536);
-            CHECK(audio_driver_pipeline_transport_step(stage, &serial, 71, 37,
+            CHECK(audio_driver_pipeline_transport_step(stage, &st->pipe_transport_serial, 71, 37,
                      used == 2048, &complete), "paced native transport step");
             if (pending)
                CHECK(tail == retro_atomic_load_relaxed_size(&st->pipe_ring.tail),
@@ -1562,7 +1599,12 @@ static size_t native_render_case(bool floating, bool wide, bool hq, bool filter)
             CHECK(!memcmp(reference, cap, cap_frames * dev_channels * sizeof(float)),
                   "fragmented native render differs: float=%u wide=%u HQ=%u filter=%u", floating, wide, hq, filter);
       }
-      audio_pipeline_stretch_free(stage);
+      if (fragmented)
+      {
+         audio_driver_pipeline_transport_release();
+         CHECK(!st->pipe_transport && !st->pipe_transport_output, "owned transport release");
+      }
+      else audio_pipeline_stretch_free(stage);
    }
    config_get_ptr()->bools.audio_fastpath_s16 = false;
    short_zero = false;
@@ -1571,6 +1613,104 @@ static size_t native_render_case(bool floating, bool wide, bool hq, bool filter)
    retro_atomic_store_release_int(&st->runloop_snapshot, 0);
    free(reference);
    return reference_frames;
+}
+
+static void transport_owner_cases(void)
+{
+   extern unsigned transport_control_calls;
+   audio_driver_state_t *st = &audio_driver_st;
+   unsigned floating, wide, before = failures;
+   for (floating = 0; floating < 2; floating++)
+      for (wide = 0; wide < 2; wide++)
+      {
+         audio_driver_t wrapper;
+         const audio_driver_t *saved;
+         audio_pipeline_stretch_t *stage;
+         struct audio_pipeline_stretch_block block;
+         union { float f[17*11]; int16_t i[17*11]; } input;
+         void *output;
+         size_t bytes;
+         unsigned calls, j;
+         CHECK(pipe_up(floating, floating), "transport owner stand-up");
+         if (!wide)
+         {
+            st->pipe_channels = 2;
+            st->pipe_frame_bytes = 2 * (floating ? sizeof(float) : sizeof(int16_t));
+         }
+         CHECK(!st->pipe_transport && !st->pipe_transport_output, "default allocated transport");
+         saved = st->current_audio; wrapper = *saved; wrapper.ident = "audio-thread";
+         st->current_audio = &wrapper;
+         calls = transport_control_calls;
+         transport_fail_output = true;
+         CHECK(!audio_driver_pipeline_transport_prepare(48000, 1), "output allocation failure accepted");
+         transport_fail_output = false;
+         CHECK(transport_control_calls == calls + 1, "prepare bypassed wrapper parking");
+         CHECK(!st->pipe_transport && !st->pipe_transport_output, "failed prepare left state");
+         CHECK(audio_driver_pipeline_transport_prepare(48000, 1), "owner prepare");
+         stage = st->pipe_transport; output = st->pipe_transport_output;
+         CHECK(stage && output && !((uintptr_t)output % 64), "owner storage/alignment");
+         CHECK(!audio_driver_pipeline_transport_prepare(7999, 1), "invalid rate accepted");
+         transport_allocations = transport_frees = 0; transport_track = true;
+         transport_fail_stage = true;
+         CHECK(!audio_driver_pipeline_transport_prepare(48000, 1), "stage allocation failure accepted");
+         transport_fail_stage = false; transport_track = false;
+         CHECK(transport_allocations == 1 && transport_frees == 1, "partial prepare leaked output");
+         CHECK(st->pipe_transport == stage && st->pipe_transport_output == output,
+               "failed replacement destroyed session");
+         memset(&input, 0, sizeof(input));
+         bytes = st->pipe_frame_bytes;
+         CHECK(retro_spsc_write(&st->pipe_ring, &input, bytes) == bytes, "queued owner source");
+         CHECK(!audio_driver_pipeline_transport_prepare(48000, 1), "replaced queued owner");
+         audio_driver_set_core_float(!floating);
+         CHECK(st->pipe_float == (floating != 0) && st->pipe_transport == stage,
+               "queued format changed session");
+         CHECK(retro_spsc_skip(&st->pipe_ring, bytes) == bytes, "owner test source release");
+         CHECK(audio_pipeline_layout_publish_cutoff(&st->pipe_layouts,
+                  retro_atomic_load_relaxed_size(&st->pipe_ring.head), 2000), "owner pending control");
+         st->pipe_pending = (const uint8_t*)output; st->pipe_pending_bytes = bytes;
+         CHECK(!audio_driver_pipeline_transport_prepare(48000, 1), "replaced pending device output");
+         calls = transport_control_calls;
+         audio_driver_set_core_float(!floating);
+         CHECK(transport_control_calls == calls + 1, "native rebind bypassed parking");
+         CHECK(st->pipe_transport && st->pipe_transport != stage && st->pipe_float == !floating,
+               "empty native session did not rebind");
+         CHECK(!st->pipe_pending_bytes && !st->pipe_pending, "rebind kept stale device output");
+         CHECK(st->pipe_frame_bytes == st->pipe_channels * (!floating ? sizeof(float) : sizeof(int16_t)),
+               "rebind native stride");
+         CHECK(!retro_atomic_load_relaxed_size(&st->pipe_ring.head)
+               && !retro_atomic_load_relaxed_size(&st->pipe_ring.tail)
+               && st->pipe_layouts.current_cutoff == 2000
+               && st->pipe_layouts.published_cutoff == 2000, "rebind lost alignment/control");
+         for (j = 0; j < 17 * st->pipe_channels; j++)
+            if (!floating) input.f[j] = 0.25f; else input.i[j] = 8192;
+         CHECK(audio_pipeline_layout_publish_cutoff(&st->pipe_layouts,
+                  retro_atomic_load_relaxed_size(&st->pipe_ring.head), 1000), "owner cutoff");
+         CHECK(retro_spsc_write_frames(&st->pipe_ring, &input, 17, st->pipe_frame_bytes) == 17,
+               "owner native publish");
+         CHECK(audio_pipeline_stretch_next(st->pipe_transport, 17, 17, &block), "rebound native processing");
+         CHECK(block.input_used == 17 && block.frames == 17 && block.data == st->pipe_transport_output,
+               "rebound filter did not use owned storage");
+         CHECK(!memcmp(block.data, &input, 17 * st->pipe_frame_bytes), "rebound native samples differ");
+         st->pipe_pending = (const uint8_t*)block.data;
+         st->pipe_pending_bytes = 17 * st->pipe_frame_bytes;
+         transport_fail_stage = true;
+         audio_driver_set_core_float(floating);
+         transport_fail_stage = false;
+         CHECK(!st->pipe_transport && !st->pipe_transport_output && !st->pipe_pending_bytes,
+               "failed native rebuild retained stale session");
+         CHECK(st->pipe_float == (floating != 0), "failed rebuild forced old sample format");
+         CHECK(audio_driver_pipeline_transport_prepare(48000, 1), "owner recovery");
+         calls = transport_control_calls;
+         audio_driver_pipeline_transport_release();
+         CHECK(transport_control_calls == calls + 1 && !st->pipe_transport
+               && !st->pipe_transport_output && !st->pipe_transport_rate, "owner release");
+         CHECK(audio_driver_pipeline_transport_prepare(48000, 1), "owner teardown preparation");
+         st->current_audio = saved;
+         audio_driver_deinit_internal(true);
+         CHECK(!st->pipe_transport && !st->pipe_transport_output && !st->pipe_transport_rate,
+               "driver teardown leaked transport");
+      }
+   printf("native transport ownership: 4 cases, %u failures\n", failures - before);
 }
 
 static void native_render_cases(void)
@@ -1594,6 +1734,7 @@ int main(void)
    const char *only = getenv("DM_ONLY");
 #define RUN(tag, call) do { if (!only || strstr(only, tag)) { call; } } while (0)
    printf("discrete multi-channel:\n");
+   RUN("transportowner", transport_owner_cases());
    RUN("nativerender", native_render_cases());
    RUN("srcreset", resampler_discontinuity_cases());
    RUN("suspended", suspended_multichannel_case(true, true));

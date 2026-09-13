@@ -303,9 +303,11 @@ struct defaults g_defaults;
 bool state_manager_frame_is_reversed(void) { return false; }
 
 /* These fixtures have no wrapper worker; control runs synchronously. */
+unsigned transport_control_calls;
 void audio_thread_apply_control(void *data,
       void (*control)(void *userdata), void *userdata)
 {
    (void)data;
+   transport_control_calls++;
    if (control) control(userdata);
 }

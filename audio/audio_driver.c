@@ -941,6 +941,16 @@ static bool audio_driver_deinit_internal(bool audio_enable)
    audio_st->pipe_pending = NULL;
    audio_st->pipe_pending_bytes = 0;
 
+#ifdef HAVE_THREADS
+   audio_pipeline_stretch_free(audio_st->pipe_transport);
+   audio_st->pipe_transport = NULL;
+   if (audio_st->pipe_transport_output)
+      memalign_free(audio_st->pipe_transport_output);
+   audio_st->pipe_transport_output = NULL;
+   audio_st->pipe_transport_serial = audio_st->pipe_transport_search = 0;
+   audio_st->pipe_transport_rate = 0;
+#endif
+
    /* All scratch buffers live in the two arenas; the named pointers are
     * views into them. */
    if (audio_st->arena_int16)
@@ -6498,12 +6508,124 @@ void audio_driver_set_core_multi(bool core_multi)
 }
 
 #ifdef HAVE_THREADS
+static void audio_driver_transport_clear(audio_driver_state_t *audio_st)
+{
+   audio_st->pipe_pending = NULL;
+   audio_st->pipe_pending_bytes = 0;
+   audio_driver_state_lock();
+   audio_driver_reset_resamplers(audio_st);
+   audio_driver_state_unlock();
+   audio_pipeline_stretch_free(audio_st->pipe_transport);
+   audio_st->pipe_transport = NULL;
+   if (audio_st->pipe_transport_output)
+      memalign_free(audio_st->pipe_transport_output);
+   audio_st->pipe_transport_output = NULL;
+   audio_st->pipe_transport_serial = audio_st->pipe_transport_search = 0;
+   audio_st->pipe_transport_rate = 0;
+}
+
+static bool audio_driver_transport_bind(audio_driver_state_t *audio_st,
+      unsigned rate, uint32_t search_channels, bool floating)
+{
+   audio_pipeline_stretch_t *stage;
+   void *output;
+   size_t frame = audio_st->pipe_channels * (floating ? sizeof(float) : sizeof(int16_t));
+   size_t frames = audio_st->pipe_pass_frames;
+   if (rate < 8000 || rate > 192000 || !audio_st->pipe_channels
+         || audio_st->pipe_channels > AUDIO_PIPE_CANON_CHANNELS || !frames
+         || frames > SIZE_MAX / frame) return false;
+   output = memalign_alloc(64, frames * frame);
+   if (!output) return false;
+   stage = audio_pipeline_stretch_new(rate, audio_st->pipe_channels,
+         floating, search_channels, &audio_st->pipe_ring,
+         &audio_st->pipe_layouts, output, frames);
+   if (!stage)
+   {
+      memalign_free(output);
+      return false;
+   }
+   audio_driver_transport_clear(audio_st);
+   /* Both owners are parked and the source is empty. Start at an aligned
+    * physical frame, retaining the latest published processing request. */
+   {
+      audio_pipeline_layout_t *metadata = &audio_st->pipe_layouts;
+      uint32_t control = metadata->published_control;
+      uint32_t cutoff = metadata->published_cutoff;
+      unsigned layout = metadata->published_layout;
+      retro_spsc_clear(&audio_st->pipe_ring);
+      audio_pipeline_layout_init(metadata, layout);
+      metadata->published_control = metadata->current_control = control;
+      metadata->published_cutoff = metadata->current_cutoff = cutoff;
+   }
+   audio_st->pipe_transport = stage;
+   audio_st->pipe_transport_output = output;
+   audio_st->pipe_transport_rate = rate;
+   audio_st->pipe_transport_search = search_channels;
+   return true;
+}
+
+struct audio_transport_prepare
+{
+   unsigned rate;
+   uint32_t search;
+   bool release, result;
+};
+
+static void audio_driver_transport_control(void *userdata)
+{
+   struct audio_transport_prepare *request = (struct audio_transport_prepare*)userdata;
+   audio_driver_state_t *audio_st = &audio_driver_st;
+   if (request->release)
+   {
+      if (audio_st->pipe_transport) audio_driver_transport_clear(audio_st);
+      request->result = true;
+   }
+   else if (audio_st->pipe_threaded
+         && !retro_spsc_read_avail(&audio_st->pipe_ring)
+         && !audio_st->pipe_pending_bytes)
+      request->result = audio_driver_transport_bind(audio_st,
+            request->rate, request->search, audio_st->pipe_float);
+}
+
+static void audio_driver_transport_transaction(struct audio_transport_prepare *request)
+{
+   audio_driver_state_t *audio_st = &audio_driver_st;
+   if (audio_st->current_audio &&
+         string_is_equal(audio_st->current_audio->ident, "audio-thread"))
+      audio_thread_apply_control(audio_st->context_audio_data,
+            audio_driver_transport_control, request);
+   else
+      audio_driver_transport_control(request);
+}
+
+bool audio_driver_pipeline_transport_prepare(unsigned rate, uint32_t search_channels)
+{
+   struct audio_transport_prepare request;
+   request.rate = rate; request.search = search_channels;
+   request.release = request.result = false;
+   audio_driver_transport_transaction(&request);
+   return request.result;
+}
+
+void audio_driver_pipeline_transport_release(void)
+{
+   struct audio_transport_prepare request;
+   request.rate = 0; request.search = 0;
+   request.release = true; request.result = false;
+   audio_driver_transport_transaction(&request);
+}
+
 static void audio_driver_pipe_set_format(void *userdata)
 {
    audio_driver_state_t *audio_st = (audio_driver_state_t*)userdata;
    /* Empty source alone is not quiescence: the wrapper must also be parked. */
    if (!retro_spsc_read_avail(&audio_st->pipe_ring))
    {
+      if (audio_st->pipe_transport
+            && !audio_driver_transport_bind(audio_st, audio_st->pipe_transport_rate,
+               audio_st->pipe_transport_search, audio_st->core_float))
+         /* Keep the new source native even if optional state cannot be rebuilt. */
+         audio_driver_transport_clear(audio_st);
       audio_st->pipe_float = audio_st->core_float;
       audio_st->pipe_frame_bytes = (size_t)audio_st->pipe_channels
             * (audio_st->pipe_float ? sizeof(float) : sizeof(int16_t));

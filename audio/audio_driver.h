@@ -856,6 +856,12 @@ typedef struct
    const uint8_t *pipe_pending;
    size_t pipe_pending_bytes;
    void (*resampler_int16_reset)(void *);
+#ifdef HAVE_THREADS
+   struct audio_pipeline_stretch *pipe_transport;
+   void *pipe_transport_output;
+   uint32_t pipe_transport_serial, pipe_transport_search;
+   unsigned pipe_transport_rate;
+#endif
 } audio_driver_state_t;
 
 bool audio_driver_enable_callback(void);
@@ -914,6 +920,14 @@ void audio_driver_pipeline_consumer_exit(void);
 
 #ifdef HAVE_THREADS
 struct audio_pipeline_stretch;
+/* Main producer thread, without worker locks held. Prepare on an empty source
+ * ring with no pending device output; replacement starts a new DSP epoch.
+ * Failure preserves an existing session. Release explicitly cancels retained
+ * output/history. Both transactions park and restore the real wrapper.
+ * Empty-ring format renegotiation rebuilds the session; allocation failure
+ * releases it while preserving the new native ring format. */
+bool audio_driver_pipeline_transport_prepare(unsigned rate, uint32_t search_channels);
+void audio_driver_pipeline_transport_release(void);
 /* Consumer-only bounded pass for a pitch-preserving transport session. Stage
  * must own this driver's native ring/metadata and separate output storage;
  * serial is caller-owned, initially zero. The caller owns source waits,
