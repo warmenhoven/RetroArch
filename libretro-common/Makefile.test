@@ -188,7 +188,59 @@ vfs-samples:
 	cd samples/file/vfs && ./vfs_seek_contract_test
 	$(MAKE) -C samples/file/vfs clean
 
-.PHONY: win32-configs vfs-samples
+# --- concurrency sample regression tests ------------------------------
+#
+# retro_atomic.h, retro_spsc.c, retro_eventcount.c and tpool.c have no
+# unit test under test/, and in the standalone libretro-common tree
+# nothing else compiles them at all -- a break in any of them surfaces
+# only once RetroArch is built.  Each sample's own Makefile owns its
+# build; this runs them.
+#
+# Spelled out rather than looped because they do not share an
+# interface: two carry a check target and two are run directly.
+#
+# Two passes.  The second is not redundant: the ordering these rest on
+# is supplied for free by x86 TSO, so a weakened or deleted barrier
+# still produces right answers here and shows up only as a race.
+#
+# GCC warns that atomic_thread_fence is not modelled under
+# -fsanitize=thread, and it means it: a standalone fence is invisible
+# to that pass.  retro_eventcount's wakeup handshake rests on one, so
+# a clean thread run says its loads and stores are ordered, not that
+# the fence between them is.
+CONCURRENCY_SAN ?= address,undefined
+
+threads-samples:
+	# retro_atomic_test reports a failure when no reader lands inside a
+	# write, which cannot happen on one processor, so it is skipped
+	# there rather than failing a machine that has nothing wrong with
+	# it.  Every other sample here runs anywhere.
+	@if [ "`getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2`" -gt 1 ]; then \
+	   $(MAKE) -C samples/atomic/retro_atomic_test clean && \
+	   $(MAKE) -C samples/atomic/retro_atomic_test SANITIZER=$(CONCURRENCY_SAN) && \
+	   $(MAKE) -C samples/atomic/retro_atomic_test check && \
+	   $(MAKE) -C samples/atomic/retro_atomic_test clean; \
+	 else \
+	   echo "skipping retro_atomic_test: its seqlock lane needs more than one processor"; \
+	 fi
+	$(MAKE) -C samples/queues/retro_spsc_test clean
+	$(MAKE) -C samples/queues/retro_spsc_test SANITIZER=$(CONCURRENCY_SAN)
+	cd samples/queues/retro_spsc_test && ./retro_spsc_test
+	$(MAKE) -C samples/queues/retro_spsc_test clean
+	$(MAKE) -C samples/rthreads/tpool_wait_test clean
+	$(MAKE) -C samples/rthreads/tpool_wait_test SANITIZER=$(CONCURRENCY_SAN)
+	cd samples/rthreads/tpool_wait_test && ./tpool_wait_test
+	$(MAKE) -C samples/rthreads/tpool_wait_test clean
+	# runs its own second pass against the condition-variable backend,
+	# which is what macOS, the BSDs and the console ports get
+	$(MAKE) -C samples/rthreads/retro_eventcount_test clean
+	$(MAKE) -C samples/rthreads/retro_eventcount_test check SANITIZER=$(CONCURRENCY_SAN)
+	$(MAKE) -C samples/rthreads/retro_eventcount_test clean
+
+threads-samples-tsan:
+	$(MAKE) -f Makefile.test threads-samples CONCURRENCY_SAN=thread
+
+.PHONY: win32-configs vfs-samples threads-samples threads-samples-tsan
 
 all:
 	# Build and execute tests in order, to avoid coverage file collision
@@ -243,6 +295,10 @@ all:
 	$(TEST_RWEBM_AUDIO)
 	# vfs samples: file size, seek and EOF boundaries, mapped and not
 	$(MAKE) -f Makefile.test vfs-samples
+	# concurrency samples: nothing else here compiles retro_spsc.c,
+	# retro_eventcount.c or tpool.c
+	$(MAKE) -f Makefile.test threads-samples
+	$(MAKE) -f Makefile.test threads-samples-tsan
 	# the three Windows A/W configurations, two of which nothing else builds
 	$(MAKE) -f Makefile.test win32-configs
 	
