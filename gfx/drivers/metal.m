@@ -152,6 +152,11 @@ typedef NS_ENUM(NSUInteger, ViewportResetMode) {
 
 /*! @brief captureEnabled allows previous frames to be read */
 @property (nonatomic, readwrite) bool captureEnabled;
+/* What the last frame said the menu filter should be:
+ * set_texture_frame() is applied by the video thread from
+ * thread_update_driver_state(), and reading the setting there races
+ * the menu writing it. */
+@property (nonatomic, readwrite) bool frameMenuLinearFilter;
 
 /*! @brief Returns the command buffer used for pre-render work,
  * such as mip maps and shader effects
@@ -4408,6 +4413,10 @@ static void metal_pull_cached_frame_cb(void *userdata,
                 msg:(const char *)msg
                info:(video_frame_info_t *)video_info
 {
+   /* Travels with the frame, for set_texture_frame() to read rather
+    * than the setting the menu writes */
+   self.frameMenuLinearFilter = video_info->menu_linear_filter;
+
    @autoreleasepool
    {
       bool statistics_show = video_info->statistics_show;
@@ -6387,12 +6396,12 @@ static void metal_set_texture_frame(void *data, const void *frame,
       float alpha)
 {
    MetalDriver *md         = (__bridge MetalDriver *)data;
-   settings_t *settings;
    bool menu_linear_filter;
    if (!md)
       return;
-   settings                = config_get_ptr();
-   menu_linear_filter      = settings->bools.menu_linear_filter;
+   /* What the last frame carried, not what the setting says now: the
+    * video thread applies this from thread_update_driver_state(). */
+   menu_linear_filter      = md.frameMenuLinearFilter;
 
    [md.menu updateWidth:width
                  height:height
