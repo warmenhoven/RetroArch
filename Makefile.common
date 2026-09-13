@@ -1211,6 +1211,7 @@ endif
 
 ifeq ($(HAVE_THREADS), 1)
    OBJ += $(LIBRETRO_COMM_DIR)/rthreads/rthreads.o \
+          $(LIBRETRO_COMM_DIR)/rthreads/retro_eventcount.o \
           gfx/video_thread_wrapper.o \
           gfx/video_thread_hw.o \
           audio/audio_thread_wrapper.o

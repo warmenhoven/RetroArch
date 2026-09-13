@@ -133,6 +133,7 @@ jobs:
             # <kernel.h>: the PS2 CI lane compiles it, this runs it.
             retro_atomic_ps2_backend_test
             retro_spsc_test
+            retro_eventcount_test
             msg_fifo_queue_test
             audio_mixer_loop_test
             audio_mixer_rate_guard_test
@@ -447,6 +448,32 @@ jobs:
           CC=clang make all SANITIZER=thread
 
           TSAN_OPTIONS=halt_on_error=1 ./retro_spsc_test
+
+      - name: Run retro_eventcount_test under Clang + ThreadSanitizer
+        shell: bash
+        working-directory: libretro-common/samples/rthreads/retro_eventcount_test
+        run: |
+          # retro_eventcount parks a consumer without putting a lock on
+          # the producer's fast path.  What it can get wrong is a lost
+          # wakeup: a notify that reads zero waiters while a consumer
+          # that has not yet seen the new epoch is on its way into a
+          # park.  The guard is a seq_cst fence on both sides, and a
+          # build with either fence weakened still passes on x86 TSO,
+          # so the value checks alone prove nothing -- TSan is what
+          # sees the missing barrier.
+          #
+          # 'make check' runs the address-wait backend and then the
+          # condition-variable one, which is the backend macOS, the
+          # BSDs and the console ports get.  Both matter; only the
+          # first is native here.
+          #
+          # The harness carries its own watchdog, so a genuine lost
+          # wakeup fails the job in a minute instead of hanging it.
+          set -u
+          set -o pipefail
+
+          make clean
+          CC=clang make check SANITIZER=thread
 
       - name: Run crc32_test under Clang + ThreadSanitizer
         shell: bash

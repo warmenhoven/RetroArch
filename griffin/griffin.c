@@ -1435,6 +1435,7 @@ THREAD
 #endif
 
 #include "../libretro-common/rthreads/rthreads.c"
+#include "../libretro-common/rthreads/retro_eventcount.c"
 #include "../gfx/video_thread_wrapper.c"
 #include "../gfx/video_thread_hw.c"
 #include "../audio/audio_thread_wrapper.c"
