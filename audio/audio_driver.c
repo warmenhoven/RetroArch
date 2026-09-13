@@ -708,9 +708,21 @@ static void audio_driver_extra_resample(audio_driver_state_t *audio_st,
       return;
    if (input_frames > audio_st->extra.in_frames)
       input_frames = audio_st->extra.in_frames;
-   /* Keep the extra histories fresh while the front pair bypasses SRC. */
+   /* Keep the extra histories fresh while the front pair bypasses SRC.
+    *
+    * Only where there is a front resampler to borrow the entry point
+    * from. A bit-stream pass does not resample the front pair, so
+    * audio_driver_init_internal() never made one - and this reached
+    * through it for reset without asking, which is a null dereference
+    * the moment a core with more than two channels is bitstreamed.
+    *
+    * The process() call further down is not exposed the same way: it
+    * only runs when the front pair did resample, which is exactly
+    * when a resampler exists. Bailing out of the whole function would
+    * be wrong - the extras still have to be resampled on that path,
+    * because they are what the encoder is handed. */
    if (bypass && !audio_st->extra.bypassed && !int16_path
-         && audio_st->resampler->reset)
+         && audio_st->resampler && audio_st->resampler->reset)
       for (i = 0; i < audio_st->extra.nres; i++)
          audio_st->resampler->reset(audio_st->extra.res[i]);
    audio_st->extra.bypassed = bypass;
