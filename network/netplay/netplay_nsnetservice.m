@@ -170,7 +170,12 @@ static bool srv_address_to_string(NSNetService *srv, char *address,
      * runs on the task worker thread, so enumerating the live array
      * here races -didFindService: (mutation during fast enumeration
      * raises NSGenericException).  Stop the browser on its own queue and
-     * enumerate a snapshot. */
+     * enumerate a snapshot.
+     *
+     * -copy hands back a reference this method owns.  There is no
+     * autorelease pool on a task worker, so it is released here, and
+     * the two allocation failures below leave the loop rather than the
+     * method so that they pass through it. */
     __block NSArray<NSNetService*> *services = nil;
     void (^stop_and_snapshot)(void) = ^{
         [self.browser stop];
@@ -230,7 +235,7 @@ static bool srv_address_to_string(NSNetService *srv, char *address,
                 net_st->discovered_hosts.hosts = (struct netplay_host*)
                 malloc(sizeof(*net_st->discovered_hosts.hosts));
                 if (!net_st->discovered_hosts.hosts)
-                    return;
+                    break;
                 net_st->discovered_hosts.allocated = 1;
             }
             else
@@ -246,7 +251,7 @@ static bool srv_address_to_string(NSNetService *srv, char *address,
                     memset(&net_st->discovered_hosts, 0,
                            sizeof(net_st->discovered_hosts));
 
-                    return;
+                    break;
                 }
 
                 net_st->discovered_hosts.allocated = new_allocated;
@@ -294,6 +299,8 @@ static bool srv_address_to_string(NSNetService *srv, char *address,
             host->has_spectate_password = string_is_equal(flag, "true");
         }
     }
+
+    RARCH_RELEASE(services);
 }
 
 #pragma mark - Browse helper functions
