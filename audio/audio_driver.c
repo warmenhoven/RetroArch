@@ -4180,7 +4180,11 @@ static void audio_driver_submit_width(audio_driver_state_t *audio_st,
       while (len)
       {
          unsigned gen;
-         size_t n = retro_spsc_write(&audio_st->pipe_ring, p, len);
+         size_t n = pc > 2
+            ? retro_spsc_write_frames(&audio_st->pipe_ring, p,
+                  len / audio_st->pipe_frame_bytes, audio_st->pipe_frame_bytes)
+                  * audio_st->pipe_frame_bytes
+            : retro_spsc_write(&audio_st->pipe_ring, p, len);
          /* The sink estimate's source count: what entered the ring,
           * at the nominal ratio. Counted here, on the thread that
           * closes its windows, so a window holds whole publishes and
@@ -4219,7 +4223,7 @@ static void audio_driver_submit_width(audio_driver_state_t *audio_st,
             slock_unlock(audio_st->pipe_lock);
             break;
          }
-         if (retro_spsc_write_avail(&audio_st->pipe_ring) == 0)
+         if (retro_spsc_write_avail(&audio_st->pipe_ring) < audio_st->pipe_frame_bytes)
          {
             while (audio_st->pipe_gen == gen)
                if (!scond_wait_timeout(audio_st->pipe_cond,

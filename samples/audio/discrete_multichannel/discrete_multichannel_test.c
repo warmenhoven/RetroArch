@@ -823,6 +823,42 @@ end:
    free(actual); free(expected); free(ini); free(inf);
 }
 
+static void full_wide_ring_case(bool floating)
+{
+   union { float f[8 * AUDIO_PIPE_CANON_CHANNELS]; int16_t i[8 * AUDIO_PIPE_CANON_CHANNELS]; } input, output;
+   audio_driver_state_t *st = &audio_driver_st;
+   size_t i, n, bytes;
+   unsigned round;
+   CHECK(pipe_up(floating, floating), "full wide ring stand-up");
+   retro_spsc_free(&st->pipe_ring);
+   CHECK(retro_spsc_init(&st->pipe_ring, 128), "small wide ring");
+   AUDIO_FLAGS_SET(st, AUDIO_FLAG_NONBLOCK);
+   bytes = st->pipe_frame_bytes;
+   for (round = 0; round < 64; round++)
+   {
+      for (i = 0; i < 8 * AUDIO_PIPE_CANON_CHANNELS; i++)
+      {
+         if (floating) input.f[i] = (float)(round * 1000 + i);
+         else input.i[i] = (int16_t)(round * 100 + i);
+      }
+      audio_driver_submit_width(st, 1.0f, &input, 8 * AUDIO_PIPE_CANON_CHANNELS,
+            floating, false, false, AUDIO_PIPE_CANON_CHANNELS);
+      n = retro_spsc_read_avail(&st->pipe_ring);
+      CHECK(n == (128 / bytes) * bytes, "wide ring published a partial frame");
+      CHECK(retro_spsc_read(&st->pipe_ring, &output, n) == n, "wide ring drain");
+      CHECK(!memcmp(&input, &output, n), "wide ring frame alignment changed after drop");
+   }
+   AUDIO_FLAGS_CLEAR(st, AUDIO_FLAG_NONBLOCK);
+   AUDIO_FLAGS_SET(st, AUDIO_FLAG_STARTED);
+   st->pipe_stalled = false;
+   audio_driver_submit_width(st, 1.0f, &input, 8 * AUDIO_PIPE_CANON_CHANNELS,
+         floating, false, false, AUDIO_PIPE_CANON_CHANNELS);
+   CHECK(st->pipe_stalled, "partial-frame room must enter the bounded wait");
+   CHECK(retro_spsc_read_avail(&st->pipe_ring) == (128 / bytes) * bytes,
+         "blocking publish split a frame");
+
+}
+
 int main(void)
 {
    /* One case at a time, for when a single one is being worked on:
@@ -834,6 +870,8 @@ int main(void)
    RUN("suspended", suspended_multichannel_case(false, true));
    RUN("suspended", suspended_multichannel_case(true, false));
    RUN("suspended", suspended_multichannel_case(false, false));
+   RUN("fullring", full_wide_ring_case(false));
+   RUN("fullring", full_wide_ring_case(true));
    RUN("wideformat", stereo_ring_format_case(false, true));
    RUN("wideformat", stereo_ring_format_case(true, false));
    RUN("wideformat", stereo_ring_format_case(false, false));
