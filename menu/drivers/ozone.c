@@ -769,6 +769,19 @@ struct ozone_handle
     * Prevents use-after-free on textures/fonts during driver
     * reinit under threaded video. */
    uint32_t context_generation;
+
+   /* What drawing one entry needs. Here rather than in the loop that
+    * draws them: a menu_entry_t is close to four kilobytes on its own,
+    * and with the label buffers the frame came to 9960 bytes - more
+    * than twice what this tree allows, on a function that runs every
+    * frame, on the thread that draws. One entry is drawn at a time. */
+   struct
+   {
+      menu_entry_t entry;
+      char rich_label[NAME_MAX_LENGTH];
+      char entry_value_ticker[NAME_MAX_LENGTH];
+      char wrapped_sublabel_str[MENU_LABEL_MAX_LENGTH];
+   } draw_entry;
 };
 
 typedef struct ozone_handle ozone_handle_t;
@@ -6296,11 +6309,11 @@ border_iterate:
 
    for (i = 0; i < entries_end; i++)
    {
-      char rich_label[NAME_MAX_LENGTH];
-      char entry_value_ticker[NAME_MAX_LENGTH];
-      char wrapped_sublabel_str[MENU_LABEL_MAX_LENGTH];
+      char *rich_label             = ozone->draw_entry.rich_label;
+      char *entry_value_ticker     = ozone->draw_entry.entry_value_ticker;
+      char *wrapped_sublabel_str   = ozone->draw_entry.wrapped_sublabel_str;
+      menu_entry_t *entry          = &ozone->draw_entry.entry;
       uintptr_t texture;
-      menu_entry_t entry;
       const menu_entry_t *e;
       gfx_animation_ctx_ticker_t ticker;
       gfx_animation_ctx_ticker_smooth_t ticker_smooth;
@@ -6361,13 +6374,13 @@ border_iterate:
          e = &ozone->entries_old[i].entry;
       else
       {
-         MENU_ENTRY_INITIALIZE(entry);
-         entry.flags |= MENU_ENTRY_FLAG_RICH_LABEL_ENABLED
+         MENU_ENTRY_INITIALIZE((*entry));
+         entry->flags |= MENU_ENTRY_FLAG_RICH_LABEL_ENABLED
                       | MENU_ENTRY_FLAG_LABEL_ENABLED
                       | MENU_ENTRY_FLAG_VALUE_ENABLED
                       | MENU_ENTRY_FLAG_SUBLABEL_ENABLED;
-         menu_entry_get(&entry, 0, (unsigned)i, selection_buf, true);
-         e = &entry;
+         menu_entry_get(entry, 0, (unsigned)i, selection_buf, true);
+         e = entry;
       }
 
       if (e->enum_idx == MENU_ENUM_LABEL_CHEEVOS_PASSWORD)
@@ -6767,7 +6780,7 @@ border_iterate:
                   + ozone->fonts.entries_label.line_centre_offset
                   + scroll_y),
             alpha_uint32,
-            &entry,
+            entry,
             mymat);
 
       y += OZONE_NODE_HEIGHT(node);
