@@ -4753,7 +4753,9 @@ static bool audio_driver_multi_pipe(audio_driver_state_t *audio_st,
    const unsigned pc = AUDIO_PIPE_CANON_CHANNELS;
    size_t sample = is_float ? sizeof(float) : sizeof(int16_t);
    unsigned slot[AUDIO_PIPE_CANON_CHANNELS], bit, n = 0, c;
-   size_t f;
+   size_t f, done = 0;
+   size_t capacity = frames > (AUDIO_CHUNK_SIZE_NONBLOCKING >> 1)
+      ? (AUDIO_CHUNK_SIZE_NONBLOCKING >> 1) : frames;
    if (!audio_st->pipe_threaded || audio_st->pipe_channels != pc)
       return false;
 #ifdef HAVE_REWIND
@@ -4762,19 +4764,19 @@ static bool audio_driver_multi_pipe(audio_driver_state_t *audio_st,
    if (state_manager_frame_is_reversed())
       return false;
 #endif
-   if (frames > audio_st->pipe_canon_frames)
-   {
-      uint8_t *nb = (uint8_t*)realloc(audio_st->pipe_canon, frames * pc * sizeof(float));
-      if (!nb)
-         return false;
-      audio_st->pipe_canon        = nb;
-      audio_st->pipe_canon_frames = frames;
-   }
-   /* what the classic entry does before it publishes */
+   /* Discarded publishes must not grow staging storage. */
    if (AUDIO_FLAGS_GET(audio_st) & AUDIO_FLAG_SUSPENDED)
       return true;
    if (audio_st->float_gate && audio_st->float_gate())
-      return true;    /* netplay's interception, for an entry it cannot swap */
+      return true;
+   if (capacity > audio_st->pipe_canon_frames)
+   {
+      uint8_t *nb = (uint8_t*)realloc(audio_st->pipe_canon, capacity * pc * sizeof(float));
+      if (!nb)
+         return false;
+      audio_st->pipe_canon        = nb;
+      audio_st->pipe_canon_frames = capacity;
+   }
    runloop_flags = runloop_get_flags();
    audio_driver_record_push(audio_st, data, frames, channels, layout, is_float);
    if (      (runloop_flags & RUNLOOP_FLAG_PAUSED)
@@ -4785,16 +4787,22 @@ static bool audio_driver_multi_pipe(audio_driver_state_t *audio_st,
    for (bit = 0; bit < pc; bit++)
       if (layout & (1u << bit))
          slot[n++] = bit;
-   memset(audio_st->pipe_canon, 0, frames * pc * sample);
-   for (f = 0; f < frames; f++)
-      for (c = 0; c < channels && c < n; c++)
-         memcpy(audio_st->pipe_canon + (f * pc + slot[c]) * sample,
-               (const uint8_t*)data + (f * channels + c) * sample, sample);
    retro_atomic_store_release_int(&audio_st->pipe_layout, (int)layout);
-   audio_driver_submit_width(audio_st, config_get_ptr()->floats.slowmotion_ratio,
-         audio_st->pipe_canon, frames * pc, is_float,
-         (runloop_flags & RUNLOOP_FLAG_SLOWMOTION) ? true : false,
-         (runloop_flags & RUNLOOP_FLAG_FASTMOTION) ? true : false, pc);
+   while (done < frames)
+   {
+      size_t take = frames - done;
+      if (take > capacity) take = capacity;
+      memset(audio_st->pipe_canon, 0, take * pc * sample);
+      for (f = 0; f < take; f++)
+         for (c = 0; c < channels && c < n; c++)
+            memcpy(audio_st->pipe_canon + (f * pc + slot[c]) * sample,
+                  (const uint8_t*)data + ((done + f) * channels + c) * sample, sample);
+      audio_driver_submit_width(audio_st, config_get_ptr()->floats.slowmotion_ratio,
+            audio_st->pipe_canon, take * pc, is_float,
+            (runloop_flags & RUNLOOP_FLAG_SLOWMOTION) ? true : false,
+            (runloop_flags & RUNLOOP_FLAG_FASTMOTION) ? true : false, pc);
+      done += take;
+   }
    return true;
 }
 

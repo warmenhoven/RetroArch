@@ -724,6 +724,45 @@ static void large_inline_batch_case(bool floating)
    free(expected); free(input_f); free(input_i);
 }
 
+static void bounded_canonical_case(bool floating)
+{
+   const size_t chunk = AUDIO_CHUNK_SIZE_NONBLOCKING >> 1;
+   const size_t frames = 3 * chunk + 17;
+   float *input_f = (float*)malloc(frames * 6 * sizeof(float));
+   int16_t *input_i = (int16_t*)malloc(frames * 6 * sizeof(int16_t));
+   size_t sample = floating ? sizeof(float) : sizeof(int16_t);
+   uint8_t *actual = (uint8_t*)malloc(frames * AUDIO_PIPE_CANON_CHANNELS * sample);
+   const uint8_t *input = floating ? (const uint8_t*)input_f : (const uint8_t*)input_i;
+   audio_driver_state_t *st = &audio_driver_st;
+   size_t f; unsigned c, slot;
+   uint8_t zero[sizeof(float)] = {0};
+   CHECK(pipe_up(floating, floating), "canonical stand-up");
+   for (f = 0; f < frames * 6; f++)
+   {
+      input_i[f] = (int16_t)(f % 30000);
+      input_f[f] = input_i[f] / 32768.0f;
+   }
+   AUDIO_FLAGS_SET(st, AUDIO_FLAG_SUSPENDED);
+   CHECK(audio_driver_multi_pipe(st, input, frames, 6, AUDIO_LAYOUT_5POINT1, floating),
+         "suspended publish accepted");
+   CHECK(!st->pipe_canon && !st->pipe_canon_frames, "suspended publish allocated staging");
+   AUDIO_FLAGS_CLEAR(st, AUDIO_FLAG_SUSPENDED);
+   CHECK(audio_driver_multi_pipe(st, input, frames, 6, AUDIO_LAYOUT_5POINT1, floating),
+         "canonical publish accepted");
+   CHECK(st->pipe_canon_frames <= chunk, "canonical staging exceeds one chunk");
+   CHECK(retro_spsc_read(&st->pipe_ring, actual, frames * st->pipe_frame_bytes)
+         == frames * st->pipe_frame_bytes, "canonical publish lost frames");
+   for (f = 0; f < frames; f++)
+      for (slot = c = 0; slot < AUDIO_PIPE_CANON_CHANNELS; slot++)
+      {
+         const uint8_t *expected = zero;
+         if (AUDIO_LAYOUT_5POINT1 & (1u << slot)) expected = input + (f * 6 + c++) * sample;
+         CHECK(!memcmp(actual + (f * AUDIO_PIPE_CANON_CHANNELS + slot) * sample,
+                  expected, sample), "canonical slot differs at frame %u", (unsigned)f);
+      }
+   free(actual); free(input_f); free(input_i);
+}
+
 int main(void)
 {
    /* One case at a time, for when a single one is being worked on:
@@ -731,6 +770,8 @@ int main(void)
    const char *only = getenv("DM_ONLY");
 #define RUN(tag, call) do { if (!only || strstr(only, tag)) { call; } } while (0)
    printf("discrete multi-channel:\n");
+   RUN("canonical", bounded_canonical_case(true));
+   RUN("canonical", bounded_canonical_case(false));
    RUN("large", large_inline_batch_case(true));
    RUN("large", large_inline_batch_case(false));
    RUN("discrete", discrete_case(true, true));
