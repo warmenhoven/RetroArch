@@ -2540,14 +2540,27 @@ static void materialui_update_fullscreen_thumbnail_label(
 
 static void materialui_update_savestate_thumbnail_path(void *data, unsigned i)
 {
+   /* Off the frame: two paths and a menu_entry_t came to 8008 bytes
+    * where this tree allows four thousand. This runs when the selection
+    * moves, not every frame, so one allocation costs less than the
+    * frame did. */
+   struct savestate_thumb_scratch
+   {
+      menu_entry_t entry;
+      char old_path[PATH_MAX_LENGTH];
+      char path[PATH_MAX_LENGTH];
+   } *scratch;
    settings_t *settings     = config_get_ptr();
    materialui_handle_t *mui = (materialui_handle_t*)data;
    bool savestate_thumbnail;
-   char old_path[PATH_MAX_LENGTH];
+   char *old_path;
+
+   if (!(scratch = (struct savestate_thumb_scratch*)malloc(sizeof(*scratch))))
+      return;
+   old_path = scratch->old_path;
 
    if (!mui)
-      return;
-
+      { free(scratch); return; }
    savestate_thumbnail      = settings->bools.savestate_thumbnail_enable;
 
    /* Snapshot the current path before clearing it, so we can detect
@@ -2556,37 +2569,37 @@ static void materialui_update_savestate_thumbnail_path(void *data, unsigned i)
     * mirrors is itself a fixed-size char array) and avoids the leak
     * + potential NULL-deref of the previous strdup-before-NULL-check
     * construction. */
-   strlcpy(old_path, mui->savestate_thumbnail_file_path, sizeof(old_path));
+   strlcpy(old_path, mui->savestate_thumbnail_file_path, PATH_MAX_LENGTH);
 
    mui->savestate_thumbnail_file_path[0] = '\0';
 
    if (savestate_thumbnail)
    {
-      menu_entry_t entry;
+      menu_entry_t *entry = &scratch->entry;
 
-      MENU_ENTRY_INITIALIZE(entry);
-      entry.flags |= MENU_ENTRY_FLAG_LABEL_ENABLED;
-      menu_entry_get(&entry, 0, i, NULL, true);
+      MENU_ENTRY_INITIALIZE((*entry));
+      entry->flags |= MENU_ENTRY_FLAG_LABEL_ENABLED;
+      menu_entry_get(entry, 0, i, NULL, true);
 
-      if (*entry.label)
+      if (*entry->label)
       {
-         unsigned _state_slot = string_to_unsigned(entry.label);
+         unsigned _state_slot = string_to_unsigned(entry->label);
          if (     _state_slot == MENU_ENUM_LABEL_STATE_SLOT
-               || string_is_equal(entry.label, MENU_ENUM_LABEL_STATE_SLOT_RUN_STR)
-               || string_is_equal(entry.label, MENU_ENUM_LABEL_STATE_SLOT_STR)
-               || string_is_equal(entry.label, MENU_ENUM_LABEL_LOAD_STATE_STR)
-               || string_is_equal(entry.label, MENU_ENUM_LABEL_SAVE_STATE_STR))
+               || string_is_equal(entry->label, MENU_ENUM_LABEL_STATE_SLOT_RUN_STR)
+               || string_is_equal(entry->label, MENU_ENUM_LABEL_STATE_SLOT_STR)
+               || string_is_equal(entry->label, MENU_ENUM_LABEL_LOAD_STATE_STR)
+               || string_is_equal(entry->label, MENU_ENUM_LABEL_SAVE_STATE_STR))
          {
-            char path[PATH_MAX_LENGTH];
+            char *path = scratch->path;
             runloop_state_t *runloop_st = runloop_state_get_ptr();
             int state_slot              = settings->ints.state_slot;
 
             /* State slot dropdown */
             if (     _state_slot == MENU_ENUM_LABEL_STATE_SLOT
-                  || string_is_equal(entry.label, MENU_ENUM_LABEL_STATE_SLOT_RUN_STR))
+                  || string_is_equal(entry->label, MENU_ENUM_LABEL_STATE_SLOT_RUN_STR))
                state_slot    = i - 1;
 
-            gfx_savestate_thumbnail_get_path(path, sizeof(path),
+            gfx_savestate_thumbnail_get_path(path, PATH_MAX_LENGTH,
                   runloop_st->name.savestate, state_slot);
 
             /* Must let invalid be empty here as opposed to other drivers
@@ -2602,6 +2615,7 @@ static void materialui_update_savestate_thumbnail_path(void *data, unsigned i)
          }
       }
    }
+   free(scratch);
 }
 
 static void materialui_update_savestate_thumbnail_image(void *data)

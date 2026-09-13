@@ -1872,6 +1872,16 @@ static void xmb_update_dynamic_wallpaper(xmb_handle_t *xmb, bool reset)
 
 static void xmb_update_savestate_thumbnail_path(void *data, unsigned i)
 {
+   /* Off the frame: two paths and a menu_entry_t came to 8008 bytes
+    * where this tree allows four thousand. This runs when the selection
+    * moves, not every frame, so one allocation costs less than the
+    * frame did. */
+   struct savestate_thumb_scratch
+   {
+      menu_entry_t entry;
+      char old_path[PATH_MAX_LENGTH];
+      char path[PATH_MAX_LENGTH];
+   } *scratch;
    xmb_handle_t *xmb        = (xmb_handle_t*)data;
    settings_t *settings     = config_get_ptr();
    bool savestate_thumbnail;
@@ -1884,56 +1894,57 @@ static void xmb_update_savestate_thumbnail_path(void *data, unsigned i)
     * used heap allocation for a value that lives in a fixed-size
     * char[PATH_MAX_LENGTH] ivar.  Same fix pattern as the materialui
     * equivalent (93449d3): stack buffer, after the NULL guard. */
-   char old_path[PATH_MAX_LENGTH];
+   char *old_path;
+
+   if (!(scratch = (struct savestate_thumb_scratch*)malloc(sizeof(*scratch))))
+      return;
+   old_path = scratch->old_path;
 
    if (!xmb)
-      return;
-
+      { free(scratch); return; }
    savestate_thumbnail        = settings->bools.savestate_thumbnail_enable;
-   strlcpy(old_path, xmb->savestate_thumbnail_file_path, sizeof(old_path));
+   strlcpy(old_path, xmb->savestate_thumbnail_file_path, PATH_MAX_LENGTH);
 
    if (xmb->skip_thumbnail_reset)
-      return;
-
+      { free(scratch); return; }
    xmb->savestate_thumbnail_file_path[0] = '\0';
 
    /* Savestate thumbnails are only relevant
     * when viewing the running quick menu or state slots */
    if (!((xmb->is_quick_menu && menu_is_running_quick_menu()) || xmb->is_state_slot))
-      return;
-
+      { free(scratch); return; }
    xmb->fullscreen_thumbnails_available = false;
 
    if (savestate_thumbnail)
    {
-      menu_entry_t entry;
+      menu_entry_t *entry = &scratch->entry;
 
-      MENU_ENTRY_INITIALIZE(entry);
-      entry.flags |= MENU_ENTRY_FLAG_LABEL_ENABLED;
-      menu_entry_get(&entry, 0, i, NULL, true);
+      MENU_ENTRY_INITIALIZE((*entry));
+      entry->flags |= MENU_ENTRY_FLAG_LABEL_ENABLED;
+      menu_entry_get(entry, 0, i, NULL, true);
 
-      if (*entry.label)
+      if (*entry->label)
       {
-         unsigned _state_slot = string_to_unsigned(entry.label);
+         unsigned _state_slot = string_to_unsigned(entry->label);
          if (     _state_slot == MENU_ENUM_LABEL_STATE_SLOT
-               || string_is_equal(entry.label, MENU_ENUM_LABEL_STATE_SLOT_RUN_STR)
-               || string_is_equal(entry.label, MENU_ENUM_LABEL_STATE_SLOT_STR)
-               || string_is_equal(entry.label, MENU_ENUM_LABEL_LOAD_STATE_STR)
-               || string_is_equal(entry.label, MENU_ENUM_LABEL_SAVE_STATE_STR))
+               || string_is_equal(entry->label, MENU_ENUM_LABEL_STATE_SLOT_RUN_STR)
+               || string_is_equal(entry->label, MENU_ENUM_LABEL_STATE_SLOT_STR)
+               || string_is_equal(entry->label, MENU_ENUM_LABEL_LOAD_STATE_STR)
+               || string_is_equal(entry->label, MENU_ENUM_LABEL_SAVE_STATE_STR))
          {
-            char path[PATH_MAX_LENGTH];
+            char *path = scratch->path;
             runloop_state_t *runloop_st = runloop_state_get_ptr();
             int state_slot              = settings->ints.state_slot;
 
             /* State slot dropdown */
             if (     _state_slot == MENU_ENUM_LABEL_STATE_SLOT
-                  || string_is_equal(entry.label, MENU_ENUM_LABEL_STATE_SLOT_RUN_STR))
+                  || string_is_equal(entry->label, MENU_ENUM_LABEL_STATE_SLOT_RUN_STR))
             {
                state_slot         = i - 1;
                xmb->is_state_slot = true;
             }
 
-            gfx_savestate_thumbnail_get_path(path, sizeof(path),
+            gfx_savestate_thumbnail_get_path(path, PATH_MAX_LENGTH,
                   runloop_st->name.savestate, state_slot);
 
             strlcpy(xmb->savestate_thumbnail_file_path, path,
@@ -1952,6 +1963,7 @@ static void xmb_update_savestate_thumbnail_path(void *data, unsigned i)
          }
       }
    }
+   free(scratch);
 }
 
 static void xmb_update_thumbnail_image(void *data)
