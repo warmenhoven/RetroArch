@@ -589,6 +589,12 @@ typedef struct xmb_handle
     * every frame the ticker ran. */
    char  *wrap_scratch;
    size_t wrap_scratch_cap;
+
+   /* What a pointer press needs to look at an entry with. Here rather
+    * than on the frame of xmb_render(), which runs every frame: a
+    * menu_entry_t is 3872 bytes, and the frame measured 4312 where this
+    * tree allows four thousand. One is looked at a time. */
+   menu_entry_t render_entry;
 } xmb_handle_t;
 
 /* Constant color templates — safe to share across threads.
@@ -8285,7 +8291,7 @@ static void xmb_render(void *data,
             && ((pointer_y < margin_top)
             || (pointer_x > margin_right)))
       {
-         menu_entry_t entry;
+         menu_entry_t *entry = &xmb->render_entry;
          bool get_entry = false;
 
          switch (xmb->pointer.press_direction)
@@ -8323,8 +8329,8 @@ static void xmb_render(void *data,
 
          if (get_entry)
          {
-            MENU_ENTRY_INITIALIZE(entry);
-            menu_entry_get(&entry, 0, selection, NULL, true);
+            MENU_ENTRY_INITIALIZE((*entry));
+            menu_entry_get(entry, 0, selection, NULL, true);
          }
 
          switch (xmb->pointer.press_direction)
@@ -8333,13 +8339,13 @@ static void xmb_render(void *data,
                /* Note: Direction is inverted, since 'up' should
                 * move list upwards */
                if (pointer_x > margin_right)
-                  xmb_menu_entry_action(xmb, &entry, selection, MENU_ACTION_DOWN);
+                  xmb_menu_entry_action(xmb, entry, selection, MENU_ACTION_DOWN);
                break;
             case MENU_INPUT_PRESS_DIRECTION_DOWN:
                /* Note: Direction is inverted, since 'down' should
                 * move list downwards */
                if (pointer_x > margin_right)
-                  xmb_menu_entry_action(xmb, &entry, selection, MENU_ACTION_UP);
+                  xmb_menu_entry_action(xmb, entry, selection, MENU_ACTION_UP);
                break;
             case MENU_INPUT_PRESS_DIRECTION_LEFT:
                /* Navigate left
@@ -8348,7 +8354,7 @@ static void xmb_render(void *data,
                 * which is actually a movement to the *right* */
                if (pointer_y < margin_top)
                   xmb_menu_entry_action(xmb,
-                        &entry, selection,
+                        entry, selection,
                           (xmb->depth == 1)
                         ? MENU_ACTION_RIGHT
                         : MENU_ACTION_LEFT);
@@ -8360,7 +8366,7 @@ static void xmb_render(void *data,
                 * which is actually a movement to the *left* */
                if (pointer_y < margin_top)
                   xmb_menu_entry_action(xmb,
-                        &entry, selection,
+                        entry, selection,
                           (xmb->depth == 1)
                         ? MENU_ACTION_LEFT
                         : MENU_ACTION_RIGHT);
@@ -8376,7 +8382,7 @@ static void xmb_render(void *data,
    if (xmb->thumbnails.pending_icons != XMB_PENDING_THUMBNAIL_NONE)
    {
       /* Walk the visible range and dispatch async stream requests for
-       * each unresolved entry. We deliberately do NOT sync-load on
+       * each unresolved entry-> We deliberately do NOT sync-load on
        * the main thread here. Doing so blocks the main thread long
        * enough (PNG/JPEG decode + GPU texture upload, repeated for
        * 10–20 entries) that the runloop misses several
