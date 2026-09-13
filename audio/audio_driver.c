@@ -702,7 +702,7 @@ static bool audio_driver_extra_prepare(audio_driver_state_t *audio_st,
 static void audio_driver_extra_resample(audio_driver_state_t *audio_st,
       double ratio, size_t input_frames, bool bypass, bool int16_path)
 {
-   unsigned i, c, ch = audio_st->extra.channels;
+   unsigned i, ch = audio_st->extra.channels;
    size_t f, out_frames = 0;
    if (!audio_st->extra.pending)
       return;
@@ -726,6 +726,29 @@ static void audio_driver_extra_resample(audio_driver_state_t *audio_st,
       for (i = 0; i < audio_st->extra.nres; i++)
          audio_st->resampler->reset(audio_st->extra.res[i]);
    audio_st->extra.bypassed = bypass;
+   if (bypass)
+   {
+      size_t n = input_frames < audio_st->extra.cap_out
+         ? input_frames : audio_st->extra.cap_out;
+      size_t samples = n * ch;
+      if (int16_path)
+      {
+         if (audio_st->extra.is_float)
+            convert_float_to_s16(audio_st->extra.out_i, audio_st->extra.in_f, samples);
+         else
+            memcpy(audio_st->extra.out_i, audio_st->extra.in_i, samples * sizeof(int16_t));
+      }
+      else
+      {
+         if (!audio_st->extra.is_float)
+            convert_s16_to_float(audio_st->extra.out_f, audio_st->extra.in_i, samples, 1.0f);
+         else
+            memcpy(audio_st->extra.out_f, audio_st->extra.in_f, samples * sizeof(float));
+      }
+      audio_st->extra.out_frames = n;
+      audio_st->extra.pending    = false;
+      return;
+   }
    /* the front path decided its format; the extras follow it */
    if (int16_path && audio_st->extra.is_float)
       convert_float_to_s16(audio_st->extra.in_i, audio_st->extra.in_f, input_frames * ch);
@@ -743,21 +766,13 @@ static void audio_driver_extra_resample(audio_driver_state_t *audio_st,
             audio_st->extra.pair_in_i[2 * f]     = audio_st->extra.in_i[f * ch + c0];
             audio_st->extra.pair_in_i[2 * f + 1] = audio_st->extra.in_i[f * ch + c1];
          }
-         if (bypass)
-         {
-            memcpy(audio_st->extra.pair_out_i, audio_st->extra.pair_in_i, input_frames * 2 * sizeof(int16_t));
-            n = input_frames;
-         }
-         else
-         {
-            d.data_in       = audio_st->extra.pair_in_i;
-            d.data_out      = audio_st->extra.pair_out_i;
-            d.input_frames  = (unsigned)input_frames;
-            d.output_frames = 0;
-            d.ratio         = ratio;
-            audio_st->resampler_int16_process(audio_st->extra.res[i], &d);
-            n = d.output_frames;
-         }
+         d.data_in       = audio_st->extra.pair_in_i;
+         d.data_out      = audio_st->extra.pair_out_i;
+         d.input_frames  = (unsigned)input_frames;
+         d.output_frames = 0;
+         d.ratio         = ratio;
+         audio_st->resampler_int16_process(audio_st->extra.res[i], &d);
+         n = d.output_frames;
          if (n > audio_st->extra.cap_out) n = audio_st->extra.cap_out;
          for (f = 0; f < n; f++)
          {
@@ -774,21 +789,13 @@ static void audio_driver_extra_resample(audio_driver_state_t *audio_st,
             audio_st->extra.pair_in[2 * f]     = audio_st->extra.in_f[f * ch + c0];
             audio_st->extra.pair_in[2 * f + 1] = audio_st->extra.in_f[f * ch + c1];
          }
-         if (bypass)
-         {
-            memcpy(audio_st->extra.pair_out, audio_st->extra.pair_in, input_frames * 2 * sizeof(float));
-            n = input_frames;
-         }
-         else
-         {
-            d.data_in       = audio_st->extra.pair_in;
-            d.data_out      = audio_st->extra.pair_out;
-            d.input_frames  = input_frames;
-            d.output_frames = 0;
-            d.ratio         = ratio;
-            audio_st->resampler->process(audio_st->extra.res[i], &d);
-            n = d.output_frames;
-         }
+         d.data_in       = audio_st->extra.pair_in;
+         d.data_out      = audio_st->extra.pair_out;
+         d.input_frames  = input_frames;
+         d.output_frames = 0;
+         d.ratio         = ratio;
+         audio_st->resampler->process(audio_st->extra.res[i], &d);
+         n = d.output_frames;
          if (n > audio_st->extra.cap_out) n = audio_st->extra.cap_out;
          for (f = 0; f < n; f++)
          {
@@ -799,7 +806,6 @@ static void audio_driver_extra_resample(audio_driver_state_t *audio_st,
       }
       out_frames = n;
    }
-   (void)c;
    audio_st->extra.out_frames = out_frames;
    audio_st->extra.pending    = false;
 }

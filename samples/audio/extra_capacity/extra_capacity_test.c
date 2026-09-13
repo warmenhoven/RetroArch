@@ -172,11 +172,90 @@ static void check_bypass(void)
    sinc_resampler.free(front);
 }
 
+static void check_direct_bypass(void)
+{
+   static audio_driver_state_t st;
+   static float expected_f[32 * 5];
+   static int16_t expected_i[32 * 5];
+   unsigned ch, integer, source_float, i, pass;
+   const size_t counts[] = {0, 1, 17, 32, 40};
+   const uint32_t special[] = {0x00000000u, 0x80000000u, 0x7f800000u,
+      0xff800000u, 0x7fc12345u, 0x37800000u, 0xb7800000u};
+   for (ch = 1; ch <= 5; ch++)
+      for (integer = 0; integer < 2; integer++)
+         for (source_float = 0; source_float < 2; source_float++)
+         {
+            memset(&st, 0, sizeof(st));
+            st.resampler = &sinc_resampler;
+            st.resampler_quality = RESAMPLER_QUALITY_NORMAL;
+            st.src_ratio_orig = 1;
+            st.resampler_int16_free = sinc_resampler_int16_free;
+            CHECK(audio_driver_extra_prepare(&st, ch, 0, 32, source_float != 0, integer != 0));
+            /* Also cover bypass with no front resampler, as in bitstreaming. */
+            st.resampler = NULL;
+            st.extra.cap_out = 19;
+            for (i = 0; i < 32 * ch; i++)
+            {
+               st.extra.in_i[i] = (int16_t)((int)(i * 977) - 32768);
+               st.extra.in_f[i] = ((int)(i % 13) - 6) / 4.0f;
+            }
+            for (i = 0; i < sizeof(special) / sizeof(special[0]); i++)
+               memcpy(st.extra.in_f + i, special + i, sizeof(float));
+            for (pass = 0; pass < sizeof(counts) / sizeof(counts[0]); pass++)
+            {
+               size_t cap = pass == 4 ? 37 : 19;
+               size_t n = counts[pass] < cap ? counts[pass] : cap;
+               unsigned before = heap_calls;
+               if (n > 32) n = 32;
+               st.extra.cap_out = cap;
+               memset(st.extra.pair_in, 0x5a, 32 * 2 * sizeof(float));
+               memset(st.extra.pair_in_i, 0x5a, 32 * 2 * sizeof(int16_t));
+               memset(st.extra.pair_out, 0x5a, 32 * 2 * sizeof(float));
+               memset(st.extra.pair_out_i, 0x5a, 32 * 2 * sizeof(int16_t));
+               memset(st.extra.out_f, 0x5a, 32 * ch * sizeof(float));
+               memset(st.extra.out_i, 0x5a, 32 * ch * sizeof(int16_t));
+               if (source_float)
+               {
+                  memcpy(expected_f, st.extra.in_f, n * ch * sizeof(float));
+                  convert_float_to_s16(expected_i, st.extra.in_f, n * ch);
+               }
+               else
+               {
+                  memcpy(expected_i, st.extra.in_i, n * ch * sizeof(int16_t));
+                  convert_s16_to_float(expected_f, st.extra.in_i, n * ch, 1.0f);
+               }
+               st.extra.pending = true;
+               audio_driver_extra_resample(&st, 1, counts[pass], true, integer != 0);
+               CHECK(!st.extra.pending && st.extra.out_frames == n);
+               CHECK(heap_calls == before);
+               if (integer) CHECK(memcmp(st.extra.out_i, expected_i, n * ch * sizeof(int16_t)) == 0);
+               else CHECK(memcmp(st.extra.out_f, expected_f, n * ch * sizeof(float)) == 0);
+               for (i = 0; i < 32 * 2 * sizeof(float); i++)
+               {
+                  CHECK(((unsigned char*)st.extra.pair_in)[i] == 0x5a);
+                  CHECK(((unsigned char*)st.extra.pair_out)[i] == 0x5a);
+               }
+               for (i = 0; i < 32 * 2 * sizeof(int16_t); i++)
+               {
+                  CHECK(((unsigned char*)st.extra.pair_in_i)[i] == 0x5a);
+                  CHECK(((unsigned char*)st.extra.pair_out_i)[i] == 0x5a);
+               }
+               for (i = (unsigned)(n * ch * sizeof(float)); i < 32 * ch * sizeof(float); i++)
+                  CHECK(((unsigned char*)st.extra.out_f)[i] == 0x5a);
+               for (i = (unsigned)(n * ch * sizeof(int16_t)); i < 32 * ch * sizeof(int16_t); i++)
+                  CHECK(((unsigned char*)st.extra.out_i)[i] == 0x5a);
+            }
+            st.resampler = &sinc_resampler;
+            audio_driver_extra_free(&st);
+         }
+}
+
 int main(void)
 {
    check_lane(0);
    check_lane(1);
    check_bypass();
+   check_direct_bypass();
    printf("extra capacity: %u failures\n", failures);
    return failures != 0;
 }
