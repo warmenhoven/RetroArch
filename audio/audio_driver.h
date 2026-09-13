@@ -912,6 +912,20 @@ void audio_driver_set_nonblock_state(bool nonblock);
  **/
 void audio_driver_pipeline_consumer_exit(void);
 
+#ifdef HAVE_THREADS
+struct audio_pipeline_stretch;
+/* Consumer-only bounded pass for a pitch-preserving transport session. Stage
+ * must own this driver's native ring/metadata and separate output storage;
+ * serial is caller-owned, initially zero. The caller owns source waits,
+ * priming, lifecycle/discontinuity discard and EOF selection. False requires
+ * caller intervention (invalid state, pause/inactive, underrun or stage error).
+ * Device backpressure/retries return true without new source consumption.
+ * No stage initialization or mode selection is performed here. */
+bool audio_driver_pipeline_transport_step(struct audio_pipeline_stretch *stage,
+      uint32_t *serial, size_t input_budget, size_t output_budget,
+      bool finishing, bool *complete);
+#endif
+
 /**
  * audio_driver_pipeline_wake:
  *

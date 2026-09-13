@@ -12,6 +12,9 @@ flags   += -std=gnu99
 SOURCES_C := \
 	device_list_driver_test.c \
 	../../../audio/audio_upmix.c \
+	../../../audio/audio_stretch.c \
+	../../../audio/audio_pipeline_stretch.c \
+	../../../audio/audio_speed_lpf.c \
 	../../../audio/audio_binaural.c \
 	stubs_retroarch.c \
 	$(CORE_DIR)/audio/drivers/alsa.c \

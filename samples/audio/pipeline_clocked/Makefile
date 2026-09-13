@@ -12,6 +12,9 @@ flags   += -std=gnu99 -g
 SOURCES_C := \
 	pipeline_clocked_test.c \
 	../../../audio/audio_upmix.c \
+	../../../audio/audio_stretch.c \
+	../../../audio/audio_pipeline_stretch.c \
+	../../../audio/audio_speed_lpf.c \
 	../../../audio/audio_binaural.c \
 	stubs_retroarch.c \
 	$(LIBRETRO_COMM_DIR)/lists/string_list.c \

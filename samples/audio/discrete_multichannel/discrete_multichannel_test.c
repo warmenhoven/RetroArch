@@ -1391,7 +1391,7 @@ static void resampler_discontinuity_cases(void)
 
 
 /* Real queue/WSOLA output handed directly to the shipping frontend renderer. */
-static void native_render_case(bool floating, bool wide, bool hq)
+static size_t native_render_case(bool floating, bool wide, bool hq, bool filter)
 {
    static union { float f[2048 * 11]; int16_t i[2048 * 11]; } input;
    union { float f[257 * 11]; int16_t i[257 * 11]; } output, saved;
@@ -1402,6 +1402,8 @@ static void native_render_case(bool floating, bool wide, bool hq)
    float *reference = NULL;
    size_t reference_frames = 0;
    unsigned fragmented;
+   bool old_speedup = config_get_ptr()->bools.audio_fastforward_speedup;
+   float old_slowmotion = config_get_ptr()->floats.slowmotion_ratio;
    for (fragmented = 0; fragmented < 2; fragmented++)
    {
       audio_pipeline_stretch_t *stage;
@@ -1435,13 +1437,13 @@ static void native_render_case(bool floating, bool wide, bool hq)
       stage = audio_pipeline_stretch_new(48000, channels, floating, 1,
             &st->pipe_ring, &st->pipe_layouts, &output, 257);
       CHECK(stage != NULL, "native renderer stage");
-      if (!stage) { free(reference); return; }
+      if (!stage) { free(reference); return 0; }
       for (segment = 0; segment < 4; segment++)
       {
          uint32_t layout = wide ? layouts[segment] : AUDIO_LAYOUT_STEREO;
-         CHECK(audio_pipeline_layout_publish_transport(&st->pipe_layouts,
+         CHECK(audio_pipeline_layout_publish_processing(&st->pipe_layouts,
                   segment * 512 * frame, layout, tempos[segment], segment != 0,
-                  segment == 2), "native renderer control publication");
+                  segment == 2, filter && segment != 3 ? 800 + segment * 900 : 0), "native renderer control publication");
          for (f = segment * 512; f < (segment + 1) * 512; f++)
             for (c = 0; c < channels; c++)
             {
@@ -1466,6 +1468,49 @@ static void native_render_case(bool floating, bool wide, bool hq)
       {
          size_t accepted, tail;
          if (++iterations > 100000) abort();
+         if (fragmented)
+         {
+            bool pending = st->pipe_pending_bytes != 0;
+            tail = retro_atomic_load_relaxed_size(&st->pipe_ring.tail);
+            if (iterations == 1)
+            {
+               size_t events = retro_atomic_load_relaxed_size(&st->pipe_layouts.tail);
+               short_no_room = true;
+               CHECK(audio_driver_pipeline_transport_step(stage, &serial, 71, 37,
+                        false, &complete), "transport wait rejection");
+               CHECK(tail == retro_atomic_load_relaxed_size(&st->pipe_ring.tail)
+                     && events == retro_atomic_load_relaxed_size(&st->pipe_layouts.tail)
+                     && !serial && !cap_frames, "failed device wait advanced transport");
+               short_no_room = false;
+               retro_atomic_store_release_int(&st->runloop_snapshot, AUDIO_SNAP_PAUSED);
+               CHECK(!audio_driver_pipeline_transport_step(stage, &serial, 71, 37,
+                        false, &complete), "paused transport must defer to lifecycle owner");
+               CHECK(tail == retro_atomic_load_relaxed_size(&st->pipe_ring.tail)
+                     && events == retro_atomic_load_relaxed_size(&st->pipe_layouts.tail),
+                     "paused transport advanced source/control");
+               retro_atomic_store_release_int(&st->runloop_snapshot, 0);
+               CHECK(audio_driver_pipeline_transport_step(stage, &serial, 71, 0,
+                        false, &complete), "transport zero budget");
+               CHECK(tail == retro_atomic_load_relaxed_size(&st->pipe_ring.tail),
+                     "zero output budget consumed input");
+            }
+            if (pending) short_zero = false;
+            config_get_ptr()->bools.audio_fastforward_speedup = true;
+            config_get_ptr()->floats.slowmotion_ratio = 3.0f;
+            retro_atomic_store_release_int(&st->runloop_snapshot,
+                  AUDIO_SNAP_SLOWMOTION | AUDIO_SNAP_FASTMOTION);
+            retro_atomic_store_release_int(&st->pipe_ff_mult_q16, 3 * 65536);
+            CHECK(audio_driver_pipeline_transport_step(stage, &serial, 71, 37,
+                     used == 2048, &complete), "paced native transport step");
+            if (pending)
+               CHECK(tail == retro_atomic_load_relaxed_size(&st->pipe_ring.tail),
+                     "transport retry consumed source");
+            used += (retro_atomic_load_relaxed_size(&st->pipe_ring.tail) - tail) / frame;
+            if (cap_frames)
+               CHECK(st->stat_core_is_float == floating && st->stat_frontend_is_float == floating,
+                     "paced transport left native lane");
+            continue;
+         }
          if (st->pipe_pending_bytes)
          {
             tail = retro_atomic_load_relaxed_size(&st->pipe_ring.tail);
@@ -1515,13 +1560,17 @@ static void native_render_case(bool floating, bool wide, bool hq)
          CHECK(cap_frames == reference_frames, "native renderer duration differs");
          if (reference && cap_frames == reference_frames)
             CHECK(!memcmp(reference, cap, cap_frames * dev_channels * sizeof(float)),
-                  "fragmented native render differs: float=%u wide=%u HQ=%u", floating, wide, hq);
+                  "fragmented native render differs: float=%u wide=%u HQ=%u filter=%u", floating, wide, hq, filter);
       }
       audio_pipeline_stretch_free(stage);
    }
    config_get_ptr()->bools.audio_fastpath_s16 = false;
    short_zero = false;
+   config_get_ptr()->bools.audio_fastforward_speedup = old_speedup;
+   config_get_ptr()->floats.slowmotion_ratio = old_slowmotion;
+   retro_atomic_store_release_int(&st->runloop_snapshot, 0);
    free(reference);
+   return reference_frames;
 }
 
 static void native_render_cases(void)
@@ -1529,8 +1578,13 @@ static void native_render_cases(void)
    unsigned floating, wide, hq, before = failures;
    for (floating = 0; floating < 2; floating++)
       for (wide = 0; wide < 2; wide++)
-         for (hq = 0; hq < 2; hq++) native_render_case(floating, wide, hq);
-   printf("native WSOLA frontend render: 16 runs, %u failures\n", failures - before);
+         for (hq = 0; hq < 2; hq++)
+         {
+            size_t dry = native_render_case(floating, wide, hq, false);
+            size_t wet = native_render_case(floating, wide, hq, true);
+            CHECK(dry == wet, "LPF changed transport duration");
+         }
+   printf("native WSOLA frontend render: 32 runs, %u failures\n", failures - before);
 }
 
 int main(void)

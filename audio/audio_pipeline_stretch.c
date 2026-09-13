@@ -17,7 +17,7 @@ struct audio_pipeline_stretch
    audio_speed_lpf_t lpf;
    size_t direct_frames, offered, frame_bytes, sample_bytes;
    unsigned layout;
-   uint32_t seen_reset, reset_serial, cutoff;
+   uint32_t seen_reset, reset_serial, cutoff, control;
    bool draining_layout, direct_source;
    union { float f[AUDIO_STRETCH_MAX_CHANNELS]; int16_t i[AUDIO_STRETCH_MAX_CHANNELS]; } wrap;
 };
@@ -46,6 +46,7 @@ audio_pipeline_stretch_t *audio_pipeline_stretch_new(unsigned rate,
    audio_speed_lpf_init(&s->lpf, rate, channels, is_float);
    s->frame_bytes = channels * sample; s->sample_bytes = sample;
    s->layout = metadata->current_layout; s->seen_reset = metadata->reset_serial;
+   s->control = 65536;
    return s;
 }
 
@@ -157,6 +158,21 @@ bool audio_pipeline_stretch_next(audio_pipeline_stretch_t *s,
    if (s->cutoff != s->metadata->current_cutoff)
    {
       uint32_t cutoff = s->metadata->current_cutoff;
+      /* A consumed source boundary can precede still-synthesizable output.
+       * Render that prefix with its old cutoff before changing the filter. */
+      if (!audio_stretch_stream_quiescent(s->stream))
+      {
+         if (!audio_stretch_stream_push_limit(s->stream, NULL, 0, &used,
+                  (double)(s->control & AUDIO_PIPELINE_TEMPO_MASK) / 65536.0,
+                  (s->control & AUDIO_PIPELINE_STRETCH) != 0, output_budget))
+            return false;
+         data = audio_stretch_stream_peek(s->stream, &span);
+         if (span)
+         {
+            apstretch_offer(s, block, data, span, output_budget);
+            return true;
+         }
+      }
       audio_speed_lpf_set(&s->lpf, cutoff != 0,
             cutoff ? cutoff : (s->cutoff ? s->cutoff : 20));
       s->cutoff = cutoff;
@@ -181,6 +197,7 @@ bool audio_pipeline_stretch_next(audio_pipeline_stretch_t *s,
       }
    }
    control = s->metadata->current_control;
+   s->control = control;
    active = (control & AUDIO_PIPELINE_STRETCH) != 0;
    if (!active && audio_stretch_stream_quiescent(s->stream))
    {

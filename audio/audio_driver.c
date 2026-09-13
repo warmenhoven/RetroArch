@@ -63,6 +63,7 @@
 
 #ifdef HAVE_THREADS
 #include "audio_thread_wrapper.h"
+#include "audio_pipeline_stretch.h"
 #endif
 
 #ifdef HAVE_MENU
@@ -4388,7 +4389,7 @@ static void audio_driver_pipeline_retry(audio_driver_state_t *audio_st)
 
 /* Caller owns this native block and has resolved pending device output.
  * Wide source must not overlap the stereo scratch used for channel splitting. */
-static void audio_driver_pipeline_render(audio_driver_state_t *audio_st,
+static INLINE void audio_driver_pipeline_render(audio_driver_state_t *audio_st,
       const void *source, size_t have, uint32_t layout, int snap)
 {
    const void *front = source;
@@ -4459,6 +4460,82 @@ static void audio_driver_pipeline_render(audio_driver_state_t *audio_st,
          (snap & AUDIO_SNAP_FASTMOTION) ? true : false);
    audio_st->extra.pending = false;
    audio_driver_state_unlock();
+}
+
+bool audio_driver_pipeline_transport_step(struct audio_pipeline_stretch *stage,
+      uint32_t *serial, size_t input_budget, size_t output_budget,
+      bool finishing, bool *complete)
+{
+   audio_driver_state_t *audio_st = &audio_driver_st;
+   const audio_driver_t *audio = audio_st->current_audio;
+   struct audio_pipeline_stretch_block block;
+   size_t frame_bytes, cap, released;
+   double ratio;
+   int snap;
+   if (!stage || !serial || !complete || !audio_st->pipe_threaded
+         || !audio || !audio->wait_writable || !audio_st->context_audio_data)
+      return false;
+   *complete = false;
+   if (!output_budget) return true;
+   snap = retro_atomic_load_acquire_int(&audio_st->runloop_snapshot);
+   if ((snap & AUDIO_SNAP_PAUSED)
+         || !(AUDIO_FLAGS_GET(audio_st) & AUDIO_FLAG_ACTIVE)
+         || !audio_st->output_samples_buf
+         || (audio->underruns && !config_get_ptr()->bools.audio_sync
+            && audio->underruns(audio_st->context_audio_data) != audio_st->pipe_underruns_seen))
+      return false;
+   if (audio_st->pipe_pending_bytes)
+   {
+      audio_driver_pipeline_retry(audio_st);
+      return true;
+   }
+   /* Transport already owns duration; SRC retains only its rate/clock trim. */
+   ratio = audio_driver_effective_ratio(audio_st, false, 1.0f, 1.0);
+   frame_bytes = audio_driver_dev_frame_bytes(audio_st);
+   if (output_budget > audio_st->pipe_pass_frames)
+      output_budget = audio_st->pipe_pass_frames;
+   if (audio_st->buffer_size)
+   {
+      cap = audio_driver_input_bound(ratio,
+            audio_driver_pipe_chunk_bytes(audio_st) / frame_bytes);
+      if (cap < 32) cap = 32;
+      if (output_budget > cap) output_budget = cap;
+   }
+   if (!output_budget) return true;
+   if (!audio->wait_writable(audio_st->context_audio_data,
+            audio_driver_output_bound(ratio, output_budget) * frame_bytes))
+      return true;
+   if (finishing)
+   {
+      if (!audio_pipeline_stretch_finish(stage, output_budget, &block, complete))
+         return false;
+   }
+   else if (!audio_pipeline_stretch_next(stage, input_budget, output_budget, &block))
+      return false;
+   if (*serial != block.reset_serial)
+   {
+      audio_driver_state_lock();
+      audio_driver_reset_resamplers(audio_st);
+      audio_driver_state_unlock();
+      *serial = block.reset_serial;
+   }
+   released = block.input_used;
+   if (block.frames)
+   {
+      audio_driver_pipeline_render(audio_st, block.data, block.frames,
+            block.layout, snap & ~(AUDIO_SNAP_SLOWMOTION | AUDIO_SNAP_FASTMOTION));
+      if (!audio_pipeline_stretch_consume(stage, block.frames)) return false;
+      if (block.passthrough) released += block.frames;
+   }
+   if (released)
+   {
+      slock_lock(audio_st->pipe_lock);
+      audio_st->pipe_gen++;
+      audio_st->pipe_stalled = false;
+      scond_signal(audio_st->pipe_cond);
+      slock_unlock(audio_st->pipe_lock);
+   }
+   return true;
 }
 
 /**
