@@ -2771,7 +2771,6 @@ void gfx_widgets_worker_step(void *data,
 {
    video_frame_info_t *video_info = (video_frame_info_t*)data;
    dispgfx_widget_t *p_dispwidget = &dispwidget_st;
-   settings_t *settings           = config_get_ptr();
 
    if (!p_dispwidget->worker)
       return;
@@ -2789,9 +2788,12 @@ void gfx_widgets_worker_step(void *data,
    gfx_animation_update_widgets(cpu_features_get_time_usec(),
          video_info->menu_ticker_speed,
          video_info->width, video_info->height);
+   /* What the frame carried, not the settings the main thread writes:
+    * this runs on the video thread under the threaded wrapper. */
    gfx_widgets_iterate_frame(
          video_info->width, video_info->height, video_info->fullscreen,
-         settings->paths.directory_assets, settings->paths.path_font,
+         video_info->widget_dir_assets,
+         (char*)video_info->widget_path_font,
          true);
    gfx_widgets_state_unlock();
 }

@@ -4557,6 +4557,8 @@ void video_driver_build_info(video_frame_info_t *video_info)
    video_info->menu_linear_filter           = settings->bools.menu_linear_filter;
    video_info->ctx_scaling                  = settings->bools.video_ctx_scaling;
    video_info->menu_ticker_speed            = settings->floats.menu_ticker_speed;
+   video_info->widget_dir_assets            = settings->paths.directory_assets;
+   video_info->widget_path_font             = settings->paths.path_font;
    video_info->dingux_ipu_keep_aspect       = settings->bools.video_dingux_ipu_keep_aspect;
    video_info->dingux_ipu_filter_type       = settings->uints.video_dingux_ipu_filter_type;
    video_info->dingux_rs90_softfilter_type  = settings->uints.video_dingux_rs90_softfilter_type;

@@ -1329,6 +1329,30 @@ static void video_thread_tex_retire_run(thread_video_t *thr,
    }
 }
 
+#ifdef HAVE_GFX_WIDGETS
+/* Keeps a slot's copies of the widget paths in step with the main
+ * thread's, without writing them again every frame: one call out of
+ * line, so the frame handoff carries neither the compares nor the
+ * copies. They are paths - after the first frame these never differ. */
+static void video_thread_slot_widget_paths(
+      struct video_thread_frame_slot *s,
+      const video_frame_info_t *video_info)
+{
+   const char *dir  = video_info->widget_dir_assets
+      ? video_info->widget_dir_assets  : "";
+   const char *font = video_info->widget_path_font
+      ? video_info->widget_path_font   : "";
+
+   if (strcmp(s->widget_dir_assets, dir) != 0)
+      strlcpy(s->widget_dir_assets, dir, sizeof(s->widget_dir_assets));
+   if (strcmp(s->widget_path_font, font) != 0)
+      strlcpy(s->widget_path_font, font, sizeof(s->widget_path_font));
+
+   s->video_info.widget_dir_assets = s->widget_dir_assets;
+   s->video_info.widget_path_font  = s->widget_path_font;
+}
+#endif
+
 static void video_thread_loop(void *data)
 {
    video_thread_tex_retire_t *tex_retire = NULL;
@@ -2010,6 +2034,15 @@ static bool video_thread_frame(void *data, const void *frame_,
             thr->frame.slot[slot].stat_text[0]             = '\0';
          thr->frame.slot[slot].video_info.stat_text        =
             thr->frame.slot[slot].stat_text;
+#ifdef HAVE_GFX_WIDGETS
+         /* The widget paths, for the same reason: this thread may write
+          * the settings they point at while the frame is drawn. Copied
+          * when they differ from what the slot holds, which after the
+          * first frame is never - they are paths, and the setting
+          * behind them changes when somebody changes it. */
+         video_thread_slot_widget_paths(&thr->frame.slot[slot],
+               video_info);
+#endif
       }
 
       if (msg)

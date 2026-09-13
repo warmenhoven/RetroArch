@@ -520,7 +520,12 @@ typedef struct video_frame_info
    bool hdr_support;
    bool menu_linear_filter;
    /* Read by gfx_widgets_worker_step(), which the threaded wrapper runs
-    * on the video thread */
+    * on the video thread. The two paths point at the settings for a
+    * caller on the main thread, and at the frame's own copies for one
+    * on the video thread - the wrapper repoints them as it hands the
+    * frame over, as it does the statistics text. */
+   const char *widget_dir_assets;
+   const char *widget_path_font;
    float menu_ticker_speed;
    /* Read by a driver answering set_aspect_ratio(), which the threaded
     * wrapper runs on the video thread */

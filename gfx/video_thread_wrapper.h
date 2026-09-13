@@ -408,7 +408,7 @@ typedef struct thread_video
        * core's declared maximum geometry. A core that hands over a
        * larger frame than it declared is clamped to this. */
       size_t   buffer_size;
-      struct
+      struct video_thread_frame_slot
       {
          uint64_t count;
          /* When the core handed this frame over, on the main thread's
@@ -426,6 +426,11 @@ typedef struct thread_video
          /* The on-screen panels' text for the widgets, which this
           * thread draws; zero length leaves what they show */
          char status_text[NAME_MAX_LENGTH];
+         /* The widget paths this frame was handed, copied for the same
+          * reason the status text is: they are the main thread's, and
+          * it may write them again while this frame is drawn. */
+         char widget_dir_assets[PATH_MAX_LENGTH];
+         char widget_path_font[PATH_MAX_LENGTH];
          size_t status_text_len;
 #endif
 #ifdef HAVE_VIDEO_FILTER
