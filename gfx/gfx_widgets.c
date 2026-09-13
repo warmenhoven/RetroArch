@@ -2784,8 +2784,10 @@ void gfx_widgets_worker_step(void *data,
             status_text_len + 1);
       p_dispwidget->gfx_widgets_status_text_len = status_text_len;
    }
+   /* What the frame carried, not what the setting says now: this runs
+    * on the video thread under the threaded wrapper. */
    gfx_animation_update_widgets(cpu_features_get_time_usec(),
-         settings->floats.menu_ticker_speed,
+         video_info->menu_ticker_speed,
          video_info->width, video_info->height);
    gfx_widgets_iterate_frame(
          video_info->width, video_info->height, video_info->fullscreen,

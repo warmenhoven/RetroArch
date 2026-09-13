@@ -521,6 +521,9 @@ typedef struct video_frame_info
    bool font_enable;
    bool hdr_support;
    bool menu_linear_filter;
+   /* Read by gfx_widgets_worker_step(), which the threaded wrapper runs
+    * on the video thread */
+   float menu_ticker_speed;
    /* Read by a driver answering set_aspect_ratio(), which the threaded
     * wrapper runs on the video thread */
    bool ctx_scaling;
