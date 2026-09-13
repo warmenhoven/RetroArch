@@ -689,7 +689,7 @@ static void fold_case(void)
    free(inf);
 }
 
-static void large_inline_batch_case(bool floating)
+static void large_inline_batch_case(bool floating, bool fold)
 {
    const size_t chunk = AUDIO_CHUNK_SIZE_NONBLOCKING >> 1;
    const size_t frames = 3 * chunk + 17;
@@ -703,15 +703,15 @@ static void large_inline_batch_case(bool floating)
          input_f[f * 6 + c] = 0.3f * (float)sin(2 * M_PI * tone_hz[c] * f / 44100.0);
          input_i[f * 6 + c] = (int16_t)(input_f[f * 6 + c] * 32767);
       }
-   CHECK(up(floating, AUDIO_LAYOUT_5POINT1, floating), "large batch stand-up");
+   CHECK(up(floating, fold ? AUDIO_LAYOUT_STEREO : AUDIO_LAYOUT_5POINT1, floating), "large batch stand-up");
    n = floating ? audio_driver_sample_batch_multi_float(input_f, frames, 6, AUDIO_LAYOUT_5POINT1)
       : audio_driver_sample_batch_multi_int16(input_i, frames, 6, AUDIO_LAYOUT_5POINT1);
    CHECK(n == frames, "large batch consumption");
    CHECK(audio_driver_st.multi_fold_frames <= chunk, "front staging exceeded one chunk");
    made = cap_frames;
-   expected = (float*)malloc(made * 6 * sizeof(float));
-   memcpy(expected, cap, made * 6 * sizeof(float));
-   CHECK(up(floating, AUDIO_LAYOUT_5POINT1, floating), "fragmented stand-up");
+   expected = (float*)malloc(made * dev_channels * sizeof(float));
+   memcpy(expected, cap, made * dev_channels * sizeof(float));
+   CHECK(up(floating, fold ? AUDIO_LAYOUT_STEREO : AUDIO_LAYOUT_5POINT1, floating), "fragmented stand-up");
    for (f = 0; f < frames; f += n)
    {
       n = frames - f > chunk ? chunk : frames - f;
@@ -719,7 +719,7 @@ static void large_inline_batch_case(bool floating)
       else audio_driver_sample_batch_multi_int16(input_i + f * 6, n, 6, AUDIO_LAYOUT_5POINT1);
    }
    CHECK(made == cap_frames, "large/fragmented frame counts differ");
-   CHECK(made == cap_frames && !memcmp(expected, cap, made * 6 * sizeof(float)),
+   CHECK(made == cap_frames && !memcmp(expected, cap, made * dev_channels * sizeof(float)),
          "large batch lost or shifted discrete channels after the first chunk");
    free(expected); free(input_f); free(input_i);
 }
@@ -772,8 +772,8 @@ int main(void)
    printf("discrete multi-channel:\n");
    RUN("canonical", bounded_canonical_case(true));
    RUN("canonical", bounded_canonical_case(false));
-   RUN("large", large_inline_batch_case(true));
-   RUN("large", large_inline_batch_case(false));
+   RUN("large", large_inline_batch_case(true, false));
+   RUN("large", large_inline_batch_case(false, false));
    RUN("discrete", discrete_case(true, true));
    RUN("discrete", discrete_case(false, false));
    RUN("discrete", discrete_case(false, true));
@@ -785,6 +785,8 @@ int main(void)
    RUN("ac3",      ac3_bitstream_case());
    RUN("virtual",  virtual_surround_case());
    RUN("fold",     fold_case());
+   RUN("fold",     large_inline_batch_case(true, true));
+   RUN("fold",     large_inline_batch_case(false, true));
    audio_driver_deinit_internal(true);
    free(cap); free(rec_cap);
    if (failures) { printf("%u failure(s)\n", failures); return 1; }

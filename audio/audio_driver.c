@@ -4693,15 +4693,9 @@ size_t audio_driver_sample_batch(const int16_t *data, size_t frames)
    return frames;
 }
 
-/* The multi-channel batch entries. A frame of the core's layout is
- * folded to stereo (audio_downmix_*) into a buffer grown to the
- * largest batch, and handed to the classic entry of the same sample
- * format, so everything downstream - the filters, the resampler, the
- * mixer, recording, rewind, netplay's gate - sees what it always has.
- * A device opened wider gets the upmix's widening of that stereo, as
- * a stereo core's does; the discrete path to such a device, with the
- * core's own rears kept apart, is the next step and will take over
- * here when it exists. Stereo in is passed straight through. */
+/* Multichannel batches use bounded native staging before the classic
+ * stereo entry. Discrete layouts carry extras beside the front pair;
+ * other layouts fold to stereo. */
 static bool audio_driver_multi_fold_room(audio_driver_state_t *audio_st,
       size_t frames, size_t sample)
 {
@@ -4894,10 +4888,23 @@ size_t audio_driver_sample_batch_multi_int16(const int16_t *data, size_t frames,
       if (audio_driver_multi_pipe(audio_st, data, frames, channels, layout, false))
          return frames;
    }
-   if (!audio_driver_multi_fold_room(audio_st, frames, sizeof(int16_t)))
-      return 0;
-   audio_downmix_s16((int16_t*)audio_st->multi_fold, data, frames, layout, channels);
-   return audio_driver_sample_batch((const int16_t*)audio_st->multi_fold, frames);
+   {
+      size_t done = 0;
+      while (done < frames)
+      {
+         size_t n = frames - done, taken;
+         if (n > (AUDIO_CHUNK_SIZE_NONBLOCKING >> 1))
+            n = AUDIO_CHUNK_SIZE_NONBLOCKING >> 1;
+         if (!audio_driver_multi_fold_room(audio_st, n, sizeof(int16_t)))
+            return done;
+         audio_downmix_s16((int16_t*)audio_st->multi_fold,
+               data + done * channels, n, layout, channels);
+         taken = audio_driver_sample_batch((const int16_t*)audio_st->multi_fold, n);
+         done += taken;
+         if (taken < n) break;
+      }
+      return done;
+   }
 }
 
 size_t audio_driver_sample_batch_multi_float(const float *data, size_t frames,
@@ -4938,10 +4945,23 @@ size_t audio_driver_sample_batch_multi_float(const float *data, size_t frames,
       if (audio_driver_multi_pipe(audio_st, data, frames, channels, layout, true))
          return frames;
    }
-   if (!audio_driver_multi_fold_room(audio_st, frames, sizeof(float)))
-      return 0;
-   audio_downmix_f32((float*)audio_st->multi_fold, data, frames, layout, channels);
-   return audio_driver_sample_batch_float((const float*)audio_st->multi_fold, frames);
+   {
+      size_t done = 0;
+      while (done < frames)
+      {
+         size_t n = frames - done, taken;
+         if (n > (AUDIO_CHUNK_SIZE_NONBLOCKING >> 1))
+            n = AUDIO_CHUNK_SIZE_NONBLOCKING >> 1;
+         if (!audio_driver_multi_fold_room(audio_st, n, sizeof(float)))
+            return done;
+         audio_downmix_f32((float*)audio_st->multi_fold,
+               data + done * channels, n, layout, channels);
+         taken = audio_driver_sample_batch_float((const float*)audio_st->multi_fold, n);
+         done += taken;
+         if (taken < n) break;
+      }
+      return done;
+   }
 }
 
 /* Float counterpart of audio_driver_sample_batch(). Used only when the
