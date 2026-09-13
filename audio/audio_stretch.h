@@ -77,5 +77,14 @@ bool audio_stretch_process(audio_stretch_t *state, struct audio_stretch_io *io,
  * this function preserves available samples and does not invent missing ones. */
 bool audio_stretch_drain(audio_stretch_t *state, struct audio_stretch_drain_io *io);
 
+/* Blend matching native spans for entry/exit transitions. The caller owns
+ * history and advances offset by frames across fragmented calls. total is
+ * 1..65536 frames; a one-frame transition selects incoming. Output may equal
+ * either input exactly; otherwise spans must not overlap. No allocation.
+ * Invalid arguments return false without writing output. */
+bool audio_stretch_crossfade(void *output, const void *outgoing,
+      const void *incoming, size_t frames, unsigned channels, bool is_float,
+      unsigned offset, unsigned total);
+
 RETRO_END_DECLS
 #endif

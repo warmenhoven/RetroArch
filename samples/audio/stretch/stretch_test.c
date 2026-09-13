@@ -486,6 +486,87 @@ static void drain_cases(void)
          }
 }
 
+static void crossfade_cases(void)
+{
+   static float a[65536 * 8], b[65536 * 8], out[65536 * 8 + 1], part[65536 * 8 + 1];
+   static int16_t ai[65536 * 8], bi[65536 * 8], oi[65536 * 8 + 1], pi[65536 * 8 + 1];
+   static const unsigned lengths[] = {1, 2, 3, 21, 128, 512, 65536};
+   unsigned l, channels, native;
+   size_t k;
+   for (k = 0; k < 65536 * 8; k++)
+   {
+      ai[k] = (int16_t)((int)(k % 65536) - 32768);
+      bi[k] = (int16_t)(32767 - (int)(k % 65536));
+      a[k] = ai[k] / 32768.0f; b[k] = bi[k] / 32768.0f;
+   }
+   for (l = 0; l < sizeof(lengths) / sizeof(lengths[0]); l++)
+      for (channels = 1; channels <= 8; channels++)
+         for (native = 0; native < 2; native++)
+         {
+            unsigned total = lengths[l], offset = 0;
+            size_t frame = channels * (native ? sizeof(float) : sizeof(int16_t));
+            const char *left = (const char*)(native ? (void*)a : (void*)ai);
+            const char *right = (const char*)(native ? (void*)b : (void*)bi);
+            char *whole = (char*)(native ? (void*)out : (void*)oi);
+            char *fragment = (char*)(native ? (void*)part : (void*)pi);
+            out[total * channels] = part[total * channels] = 1234.0f;
+            oi[total * channels] = pi[total * channels] = 1234;
+            guarded = 1;
+            CHECK(audio_stretch_crossfade(whole, left, right, total, channels, native, 0, total));
+            while (offset < total)
+            {
+               unsigned n = offset % 17 + 1;
+               if (n > total - offset) n = total - offset;
+               CHECK(audio_stretch_crossfade(fragment + offset * frame,
+                        left + offset * frame, right + offset * frame,
+                        n, channels, native, offset, total));
+               offset += n;
+            }
+            guarded = 0;
+            CHECK(memcmp(whole, fragment, total * frame) == 0);
+            for (k = 0; k < total * channels; k++)
+            {
+               unsigned w = total == 1 ? 65536 : (unsigned)
+                  (((uint64_t)(k / channels) * 65536) / (total - 1));
+               if (native)
+               {
+                  float expected = a[k] * (1.0f - w / 65536.0f) + b[k] * (w / 65536.0f);
+                  CHECK(out[k] == expected);
+               }
+               else
+               {
+                  int64_t v = (int64_t)ai[k] * (65536 - w) + (int64_t)bi[k] * w;
+                  int expected = (int)(v < 0 ? -((-v + 32768) / 65536) : (v + 32768) / 65536);
+                  CHECK(oi[k] == expected);
+               }
+            }
+            CHECK(out[total * channels] == 1234.0f && part[total * channels] == 1234.0f);
+            CHECK(oi[total * channels] == 1234 && pi[total * channels] == 1234);
+            memcpy(fragment, left, total * frame);
+            CHECK(audio_stretch_crossfade(fragment, fragment, right, total, channels, native, 0, total));
+            CHECK(memcmp(whole, fragment, total * frame) == 0);
+            memcpy(fragment, right, total * frame);
+            CHECK(audio_stretch_crossfade(fragment, left, fragment, total, channels, native, 0, total));
+            CHECK(memcmp(whole, fragment, total * frame) == 0);
+         }
+   for (k = 0; k < 3; k++) ai[k] = bi[k] = -32768;
+   CHECK(audio_stretch_crossfade(oi, ai, bi, 3, 1, false, 0, 3));
+   CHECK(oi[0] == -32768 && oi[1] == -32768 && oi[2] == -32768);
+   for (k = 0; k < 3; k++) ai[k] = bi[k] = 32767;
+   CHECK(audio_stretch_crossfade(oi, ai, bi, 3, 1, false, 0, 3));
+   CHECK(oi[0] == 32767 && oi[1] == 32767 && oi[2] == 32767);
+   oi[0] = 1234;
+   CHECK(!audio_stretch_crossfade(oi, ai, bi, 1, 0, false, 0, 1));
+   CHECK(!audio_stretch_crossfade(oi, ai, bi, 1, 9, false, 0, 1));
+   CHECK(!audio_stretch_crossfade(oi, ai, bi, 1, 1, false, 0, 0));
+   CHECK(!audio_stretch_crossfade(oi, ai, bi, 1, 1, false, 0, 65537));
+   CHECK(!audio_stretch_crossfade(oi, ai, bi, 1, 1, false, 2, 1));
+   CHECK(!audio_stretch_crossfade(oi, ai, bi, (size_t)-1, 1, false, 0, 1));
+   CHECK(!audio_stretch_crossfade(oi, NULL, bi, 1, 1, false, 0, 1));
+   CHECK(oi[0] == 1234);
+   CHECK(audio_stretch_crossfade(NULL, NULL, NULL, 0, 1, false, 65536, 65536));
+}
+
 int main(void)
 {
    contracts();
@@ -495,6 +576,7 @@ int main(void)
    excluded_channel();
    tempo_changes();
    drain_cases();
+   crossfade_cases();
    CHECK(heap_calls == 0);
    printf("stretch: %u failures, %u processing/reset heap calls\n", failures, heap_calls);
    return failures != 0;

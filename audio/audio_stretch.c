@@ -365,3 +365,53 @@ bool audio_stretch_drain(audio_stretch_t *s, struct audio_stretch_drain_io *io)
    io->complete = !s->pending && (!s->started || s->tail_read == s->hop) && !s->count;
    return true;
 }
+
+bool audio_stretch_crossfade(void *output, const void *outgoing,
+      const void *incoming, size_t frames, unsigned channels, bool is_float,
+      unsigned offset, unsigned total)
+{
+   unsigned denominator, weight, step, carry, remainder, c;
+   size_t f, sample;
+   if (!channels || channels > 8 || !total || total > 65536
+         || offset > total || frames > total - offset
+         || (frames && (!output || !outgoing || !incoming))) return false;
+   if (!frames) return true;
+   denominator = total > 1 ? total - 1 : 1;
+   weight = total > 1 ? (offset * UINT32_C(65536)) / denominator : 65536;
+   remainder = total > 1 ? (offset * UINT32_C(65536)) % denominator : 0;
+   step = 65536 / denominator;
+   carry = 65536 % denominator;
+   sample = 0;
+   for (f = 0; f < frames; f++)
+   {
+      if (!weight || weight == 65536)
+      {
+         size_t bytes = channels * (is_float ? sizeof(float) : sizeof(int16_t));
+         const char *src = (const char*)(weight ? incoming : outgoing)
+            + f * bytes;
+         char *dst = (char*)output + f * bytes;
+         if (dst != src) memcpy(dst, src, bytes);
+         sample += channels;
+      }
+      else if (is_float)
+      {
+         float b = (float)weight * (1.0f / 65536.0f);
+         float a = 1.0f - b;
+         for (c = 0; c < channels; c++, sample++)
+            ((float*)output)[sample] = ((const float*)outgoing)[sample] * a
+               + ((const float*)incoming)[sample] * b;
+      }
+      else
+         for (c = 0; c < channels; c++, sample++)
+         {
+            int64_t value = (int64_t)((const int16_t*)outgoing)[sample] * (65536 - weight)
+               + (int64_t)((const int16_t*)incoming)[sample] * weight;
+            ((int16_t*)output)[sample] = (int16_t)(value < 0
+                  ? -((-value + 32768) / 65536) : (value + 32768) / 65536);
+         }
+      weight += step;
+      remainder += carry;
+      if (remainder >= denominator) { remainder -= denominator; weight++; }
+   }
+   return true;
+}

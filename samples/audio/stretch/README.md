@@ -65,3 +65,21 @@ The tests print allocated bytes (including state) for 2/6/8 channels at several
 rates. On x86-64, 48 kHz uses 4,488/9,608/12,168 bytes for int16 and
 7,304/17,544/22,664 bytes for float. The largest supported eight-channel float
 instance uses 90,248 bytes at 192 kHz. ABI padding can change these figures.
+
+## Native transition spans
+
+`audio_stretch_crossfade` blends caller-owned outgoing/incoming spans into caller
+output without retaining state or allocating memory. Use one total frame count
+and advance the offset across fragmented calls. The same Q16 linear weight is
+shared by all channels; endpoints select the source exactly. Int16 uses convex
+int64 accumulation with nearest rounding, ties away from zero. Float remains
+float. The weight recurrence avoids per-frame division. Output can alias either
+input exactly; partial overlap is unsupported. Length is bounded to 1..65536
+frames, and a one-frame transition selects incoming.
+
+The helper does not acquire history, schedule transitions or consume drain gap
+markers. The runtime owner must retain suitable outgoing audio and select spans
+before calling it. There is no added engine storage or normal-processing work.
+Tests cover all 1..8 channels, both lanes, endpoints, full-range integer inputs,
+fragmentation, exact aliasing, invalid requests and allocation guards. Playback
+integration and listening/device acceptance remain pending.
