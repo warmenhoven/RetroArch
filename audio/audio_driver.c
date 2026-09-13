@@ -625,7 +625,13 @@ static bool audio_driver_extra_prepare(audio_driver_state_t *audio_st,
       unsigned channels, uint32_t positions, size_t frames, bool is_float, bool int16_path)
 {
    unsigned nres = (channels + 1) / 2, i;
-   size_t   cap_out = frames * 4 + 1024;   /* a ratio's worth of headroom, as the fronts have */
+   size_t cap_out = frames * 4 + 1024;
+   size_t front_cap = int16_path
+      ? audio_st->output_samples_int16_length / (2 * sizeof(int16_t))
+      : audio_st->output_samples_buf_length / (2 * sizeof(float));
+   /* The front pair's ratio bound must also fit every extra pair. */
+   if (cap_out < front_cap)
+      cap_out = front_cap;
    if (channels != audio_st->extra.channels || positions != audio_st->extra.positions
          || int16_path != audio_st->extra.res_int16 || nres != audio_st->extra.nres)
    {
@@ -656,21 +662,21 @@ static bool audio_driver_extra_prepare(audio_driver_state_t *audio_st,
    {
       free(audio_st->extra.in_f);
       free(audio_st->extra.in_i);
+      free(audio_st->extra.pair_in);
+      free(audio_st->extra.pair_in_i);
       audio_st->extra.in_f = (float*)malloc(frames * channels * sizeof(float));
       audio_st->extra.in_i = (int16_t*)malloc(frames * channels * sizeof(int16_t));
+      audio_st->extra.pair_in   = (float*)malloc(frames * 2 * sizeof(float));
+      audio_st->extra.pair_in_i = (int16_t*)malloc(frames * 2 * sizeof(int16_t));
       audio_st->extra.cap_in = frames;
    }
    if (cap_out > audio_st->extra.cap_out)
    {
-      free(audio_st->extra.pair_in);
       free(audio_st->extra.pair_out);
-      free(audio_st->extra.pair_in_i);
       free(audio_st->extra.pair_out_i);
       free(audio_st->extra.out_f);
       free(audio_st->extra.out_i);
-      audio_st->extra.pair_in    = (float*)malloc(frames * 2 * sizeof(float));
       audio_st->extra.pair_out   = (float*)malloc(cap_out * 2 * sizeof(float));
-      audio_st->extra.pair_in_i  = (int16_t*)malloc(frames * 2 * sizeof(int16_t));
       audio_st->extra.pair_out_i = (int16_t*)malloc(cap_out * 2 * sizeof(int16_t));
       audio_st->extra.out_f      = (float*)malloc(cap_out * channels * sizeof(float));
       audio_st->extra.out_i      = (int16_t*)malloc(cap_out * channels * sizeof(int16_t));

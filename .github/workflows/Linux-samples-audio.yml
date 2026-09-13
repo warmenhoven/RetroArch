@@ -815,3 +815,8 @@ jobs:
         working-directory: samples/audio/sinc_hq
         run: |
           make check SANITIZER=address,undefined
+
+      - name: Build and run extra-channel capacity test (ASan + UBSan)
+        working-directory: samples/audio/extra_capacity
+        run: |
+          make check SANITIZER=address,undefined
