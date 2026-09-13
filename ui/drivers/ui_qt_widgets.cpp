@@ -3519,6 +3519,35 @@ void ShaderParamsDialog::onScaleComboBoxIndexChanged(int)
    }
 }
 
+/* The pass a parameter belongs to follows from the order the sources
+ * sit in, so a swap is settled by resolving again rather than by
+ * moving indices by hand: a parameter both of the swapped passes
+ * declare belongs to whichever ends up first, which an index shift
+ * cannot work out.  A resolve returns every parameter to its initial
+ * value, so the values in hand are carried across by id. */
+static void shader_reresolve_keeping_values(struct video_shader *shader)
+{
+   QHash<QString, float> values;
+   unsigned i;
+
+   if (!shader)
+      return;
+
+   for (i = 0; i < shader->num_parameters; i++)
+      values.insert(QString(shader->parameters[i].id),
+            shader->parameters[i].current);
+
+   video_shader_resolve_parameters(shader);
+
+   for (i = 0; i < shader->num_parameters; i++)
+   {
+      QHash<QString, float>::const_iterator it =
+            values.constFind(QString(shader->parameters[i].id));
+      if (it != values.constEnd())
+         shader->parameters[i].current = it.value();
+   }
+}
+
 void ShaderParamsDialog::onShaderPassMoveDownClicked()
 {
    QVariant passVariant;
@@ -3546,20 +3575,9 @@ void ShaderParamsDialog::onShaderPassMoveDownClicked()
    if (video_shader)
    {
       ShaderPass tempPass;
-      int i;
 
       if (pass >= static_cast<int>(video_shader->passes) - 1)
          return;
-
-      for (i = 0; i < static_cast<int>(video_shader->num_parameters); i++)
-      {
-         struct video_shader_parameter *param = &video_shader->parameters[i];
-
-         if (param->pass == pass)
-            param->pass += 1;
-         else if (param->pass == pass + 1)
-            param->pass -= 1;
-      }
 
       tempPass = ShaderPass(&video_shader->pass[pass]);
       memcpy(&video_shader->pass[pass], &video_shader->pass[pass + 1], sizeof(struct video_shader_pass));
@@ -3569,25 +3587,17 @@ void ShaderParamsDialog::onShaderPassMoveDownClicked()
    if (menu_shader)
    {
       ShaderPass tempPass;
-      int i;
 
       if (pass >= static_cast<int>(menu_shader->passes) - 1)
          return;
-
-      for (i = 0; i < static_cast<int>(menu_shader->num_parameters); i++)
-      {
-         struct video_shader_parameter *param = &menu_shader->parameters[i];
-
-         if (param->pass == pass)
-            param->pass += 1;
-         else if (param->pass == pass + 1)
-            param->pass -= 1;
-      }
 
       tempPass = ShaderPass(&menu_shader->pass[pass]);
       memcpy(&menu_shader->pass[pass], &menu_shader->pass[pass + 1], sizeof(struct video_shader_pass));
       memcpy(&menu_shader->pass[pass + 1], tempPass.pass, sizeof(struct video_shader_pass));
    }
+
+   shader_reresolve_keeping_values(video_shader);
+   shader_reresolve_keeping_values(menu_shader);
 
    if (menu_shader)
       menu_shader->flags |= SHDR_FLAG_MODIFIED;
@@ -3622,20 +3632,9 @@ void ShaderParamsDialog::onShaderPassMoveUpClicked()
    if (video_shader)
    {
       ShaderPass tempPass;
-      int i;
 
       if (pass > static_cast<int>(video_shader->passes) - 1)
          return;
-
-      for (i = 0; i < static_cast<int>(video_shader->num_parameters); i++)
-      {
-         struct video_shader_parameter *param = &video_shader->parameters[i];
-
-         if (param->pass == pass)
-            param->pass -= 1;
-         else if (param->pass == pass - 1)
-            param->pass += 1;
-      }
 
       tempPass = ShaderPass(&video_shader->pass[pass - 1]);
       memcpy(&video_shader->pass[pass - 1], &video_shader->pass[pass], sizeof(struct video_shader_pass));
@@ -3645,25 +3644,17 @@ void ShaderParamsDialog::onShaderPassMoveUpClicked()
    if (menu_shader)
    {
       ShaderPass tempPass;
-      int i;
 
       if (pass > static_cast<int>(menu_shader->passes) - 1)
          return;
-
-      for (i = 0; i < static_cast<int>(menu_shader->num_parameters); i++)
-      {
-         struct video_shader_parameter *param = &menu_shader->parameters[i];
-
-         if (param->pass == pass)
-            param->pass -= 1;
-         else if (param->pass == pass - 1)
-            param->pass += 1;
-      }
 
       tempPass = ShaderPass(&menu_shader->pass[pass - 1]);
       memcpy(&menu_shader->pass[pass - 1], &menu_shader->pass[pass], sizeof(struct video_shader_pass));
       memcpy(&menu_shader->pass[pass], tempPass.pass, sizeof(struct video_shader_pass));
    }
+
+   shader_reresolve_keeping_values(video_shader);
+   shader_reresolve_keeping_values(menu_shader);
 
    if (menu_shader)
       menu_shader->flags |= SHDR_FLAG_MODIFIED;
