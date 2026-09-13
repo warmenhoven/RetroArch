@@ -908,6 +908,57 @@ end:
    free(expected); free(narrow); free(input_f); free(input);
 }
 
+static void wide_wrap_case(bool floating)
+{
+   const size_t frames = 512;
+   union { float f[512 * AUDIO_PIPE_CANON_CHANNELS]; int16_t i[512 * AUDIO_PIPE_CANON_CHANNELS]; } input;
+   audio_driver_state_t *st = &audio_driver_st;
+   float *reference = NULL;
+   size_t reference_frames = 0, f, c, sample = floating ? sizeof(float) : sizeof(int16_t);
+   unsigned wrap;
+   for (f = 0; f < frames; f++)
+      for (c = 0; c < AUDIO_PIPE_CANON_CHANNELS; c++)
+      {
+         int16_t v = c < 6 ? (int16_t)((int)((f * 97 + c * 7919) % 30000) - 15000) : 0;
+         if (floating) input.f[f * AUDIO_PIPE_CANON_CHANNELS + c] = v / 32768.0f;
+         else input.i[f * AUDIO_PIPE_CANON_CHANNELS + c] = v;
+      }
+   for (wrap = 0; wrap < 2; wrap++)
+   {
+      bool ready = pipe_up(floating, floating);
+      CHECK(ready, "wide wrap stand-up");
+      if (!ready) { free(reference); return; }
+      if (wrap)
+      {
+         size_t start = st->pipe_ring.capacity - 2 * sample;
+         retro_atomic_size_init(&st->pipe_ring.head, start);
+         retro_atomic_size_init(&st->pipe_ring.tail, start);
+         st->pipe_ring.cached_head = st->pipe_ring.cached_tail = start;
+      }
+      retro_atomic_store_release_int(&st->pipe_layout, AUDIO_LAYOUT_5POINT1);
+      CHECK(retro_spsc_write_frames(&st->pipe_ring, &input, frames, st->pipe_frame_bytes) == frames,
+            "wide wrap input publish");
+      audio_driver_pipeline_consume(st);
+      CHECK(retro_spsc_read_avail(&st->pipe_ring) == 0, "wide wrap did not release the input");
+      CHECK(cap_frames > 0, "wide wrap produced no device output");
+      if (!wrap)
+      {
+         reference_frames = cap_frames;
+         reference = (float*)malloc(cap_frames * 6 * sizeof(float));
+         CHECK(reference != NULL, "wide wrap reference allocation");
+         if (reference) memcpy(reference, cap, cap_frames * 6 * sizeof(float));
+      }
+      else
+      {
+         CHECK(cap_frames == reference_frames, "wrapped output frame count changed");
+         if (reference && cap_frames == reference_frames)
+            CHECK(!memcmp(reference, cap, cap_frames * 6 * sizeof(float)),
+                  "contiguous and wrapped device output differs");
+      }
+   }
+   free(reference);
+}
+
 int main(void)
 {
    /* One case at a time, for when a single one is being worked on:
@@ -919,6 +970,8 @@ int main(void)
    RUN("suspended", suspended_multichannel_case(false, true));
    RUN("suspended", suspended_multichannel_case(true, false));
    RUN("suspended", suspended_multichannel_case(false, false));
+   RUN("wrap", wide_wrap_case(false));
+   RUN("wrap", wide_wrap_case(true));
    RUN("fullring", full_wide_ring_case(false));
    RUN("fullring", full_wide_ring_case(true));
    RUN("wideformat", stereo_ring_format_case(false, true));
