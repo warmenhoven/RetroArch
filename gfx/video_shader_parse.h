@@ -200,6 +200,15 @@ struct video_shader
     * with the #reference directive, then this will be different
     * than the path */
    char loaded_preset_path[PATH_MAX_LENGTH];
+
+   /* Identifies the pass sources 'parameters' was resolved from: one
+    * entry per pass that has a source, in pass order. Appended rather
+    * than placed by alignment, so that it leaves every offset ahead of
+    * it where it was. */
+   int64_t  param_src_mtime[GFX_MAX_SHADERS];
+   int64_t  param_src_size[GFX_MAX_SHADERS];
+   uint32_t param_src_hash[GFX_MAX_SHADERS];
+   unsigned param_src_count;
 };
 
 /**
@@ -209,6 +218,11 @@ struct video_shader
  *
  * Resolves all shader parameters belonging to shaders
  * from the #pragma parameter lines in the shader for each pass.
+ *
+ * The sources are walked when the set of pass sources, or any of the
+ * files behind it, differs from the one the parameters currently held
+ * came from. Otherwise those parameters stand, reset to their initial
+ * values as a walk would leave them.
  **/
 void video_shader_resolve_parameters(struct video_shader *shader);
 

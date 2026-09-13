@@ -1084,9 +1084,87 @@ bool video_shader_source_read(const char *ident, char **buf, int64_t *len)
    return true;
 }
 
+/**
+ * video_shader_param_sources_changed:
+ * @shader            : Shader passes handle.
+ *
+ * Stamps @shader with the identity of every pass source its parameters
+ * are about to be resolved from - path, size and modification time, in
+ * pass order - and reports whether that is something other than what
+ * the stamp held.
+ *
+ * The stamp is taken ahead of the read, so a source rewritten while the
+ * walk is in progress is stamped as it stood beforehand and is read
+ * again on the next call.
+ *
+ * @return true if the parameters have to be resolved from the sources.
+ **/
+static bool video_shader_param_sources_changed(struct video_shader *shader)
+{
+   size_t i;
+   unsigned n   = 0;
+   bool changed = false;
+
+   for (i = 0; i < shader->passes; i++)
+   {
+      const char *path = shader->pass[i].source.path;
+      int64_t mtime    = 0;
+      int64_t size     = 0;
+      uint32_t hash    = 0;
+
+      if (!path || !*path)
+         continue;
+
+      /* A pass count past the stamp leaves nothing to compare the
+       * remainder against, so the whole set is resolved. */
+      if (n >= ARRAY_SIZE(shader->param_src_hash))
+      {
+         changed = true;
+         break;
+      }
+
+      hash = djb2_calculate(path);
+      size = path_get_size(path);
+
+      /* With no modification time there is nothing that distinguishes
+       * an edit in place, so such a source is read every time. */
+      if (!path_get_mtime(path, &mtime))
+         changed = true;
+
+      if (     shader->param_src_hash[n]  != hash
+            || shader->param_src_size[n]  != size
+            || shader->param_src_mtime[n] != mtime)
+         changed = true;
+
+      shader->param_src_hash[n]  = hash;
+      shader->param_src_size[n]  = size;
+      shader->param_src_mtime[n] = mtime;
+      n++;
+   }
+
+   if (shader->param_src_count != n)
+      changed = true;
+
+   shader->param_src_count = n;
+
+   return changed;
+}
+
 void video_shader_resolve_parameters(struct video_shader *shader)
 {
    size_t i;
+
+   /* A pass contributes what its source declares, so a walk over the
+    * same sources yields the same set again and only the reset to
+    * initial values is still owed. This is what holds nudging the pass
+    * count in the menu - which appends or drops a pass carrying no
+    * source of its own - to a stat per pass. */
+   if (!video_shader_param_sources_changed(shader))
+   {
+      for (i = 0; i < shader->num_parameters; i++)
+         shader->parameters[i].current = shader->parameters[i].initial;
+      return;
+   }
 
    shader->num_parameters = 0;
 
