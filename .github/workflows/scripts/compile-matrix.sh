@@ -142,6 +142,8 @@ arm "emscripten" emscripten "-D__EMSCRIPTEN__"
 platform_video "odroidgo2 video" \
    "-DHAVE_ODROIDGO2 -DHAVE_OPENGL -DHAVE_GLSL" "" \
    gfx/drivers/gl2.c ""
+platform_video "gx video" "-DGEKKO -DHW_RVL" "-I$STUBS/gx" \
+   gfx/drivers/gx_gfx.c ""
 platform_video "switch video" \
    "-DHAVE_LIBNX -DSWITCH -D__SWITCH__" "-I$STUBS/libnx" \
    gfx/drivers/switch_nx_gfx.c ""
