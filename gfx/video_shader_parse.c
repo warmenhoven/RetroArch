@@ -1024,6 +1024,33 @@ static struct video_shader_parameter *video_shader_parse_find_parameter(
  * from the #pragma parameter lines in the shader for each pass.
  *
  **/
+bool video_shader_source_read(const char *ident, char **buf, int64_t *len)
+{
+   int64_t n  = 0;
+   void   *data = NULL;
+
+   if (!ident || !*ident || !buf)
+      return false;
+
+   *buf = NULL;
+   if (len)
+      *len = 0;
+
+   /* filestream_read_file() NUL terminates what it hands back, which
+    * is what a compiler wants of a source. */
+   if (!filestream_read_file(ident, &data, &n) || n <= 0)
+   {
+      if (data)
+         free(data);
+      return false;
+   }
+
+   *buf = (char*)data;
+   if (len)
+      *len = n;
+   return true;
+}
+
 void video_shader_resolve_parameters(struct video_shader *shader)
 {
    size_t i;

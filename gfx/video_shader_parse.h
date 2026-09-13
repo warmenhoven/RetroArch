@@ -293,6 +293,22 @@ const char *video_shader_get_preset_extension(enum rarch_shader_type type);
 
 void video_shader_toggle(settings_t *settings, bool write);
 
+/**
+ * video_shader_source_read:
+ * @ident  : what names the source - a path, as presets carry them
+ * @buf    : receives the bytes, NUL terminated, for the caller to free
+ * @len    : receives their length, not counting the terminator
+ *
+ * Hands a shader driver the bytes it is to compile. The drivers under
+ * gfx/drivers_shader ask for a source by name and are given it; where
+ * those bytes live, and how the name resolves, is decided here and not
+ * by them. The caller owns what comes back, as it did when it read the
+ * file itself.
+ *
+ * Returns: true if the source was found and read.
+ **/
+bool video_shader_source_read(const char *ident, char **buf, int64_t *len);
+
 RETRO_END_DECLS
 
 #endif

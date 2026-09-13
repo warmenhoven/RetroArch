@@ -19,8 +19,6 @@
 
 #include <compat/strl.h>
 #include <compat/posix_string.h>
-#include <file/file_path.h>
-#include <streams/file_stream.h>
 #include <string/stdstring.h>
 
 #ifdef HAVE_CONFIG_H
@@ -33,6 +31,7 @@
 #endif
 
 #include "shader_glsl.h"
+#include "../video_shader_parse.h"
 #ifdef HAVE_REWIND
 #include "../../state_manager.h"
 #endif
@@ -600,11 +599,14 @@ static void gl_glsl_strip_parameter_pragmas(char *source, const char *str)
 static bool gl_glsl_load_source_path(struct video_shader_pass *pass,
       const char *path)
 {
-   int64_t len    = 0;
-   int64_t nitems = pass ? filestream_read_file(path,
-         (void**)&pass->source.string.vertex, &len) : 0;
+   int64_t len = 0;
 
-   if (nitems <= 0 || len <= 0)
+   /* Asked for by name: this driver does not open it. What comes back
+    * is ours to free, as before. */
+   if (     !pass
+         || !video_shader_source_read(path,
+               &pass->source.string.vertex, &len)
+         || len <= 0)
       return false;
 
    gl_glsl_strip_parameter_pragmas(pass->source.string.vertex,
