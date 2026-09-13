@@ -179,7 +179,8 @@ static bool pipe_up(bool core_float, bool float_dev)
    st->pipe_frame_bytes  = AUDIO_PIPE_CANON_CHANNELS * (float_dev ? sizeof(float) : sizeof(int16_t));
    st->pipe_wide_bytes   = st->pipe_pass_frames * AUDIO_PIPE_CANON_CHANNELS * sizeof(float);
    st->pipe_wide         = (uint8_t*)malloc(st->pipe_wide_bytes);
-   retro_atomic_store_release_int(&st->pipe_layout, (int)AUDIO_LAYOUT_STEREO);
+   st->pipe_layout = AUDIO_LAYOUT_STEREO;
+   audio_pipeline_layout_init(&st->pipe_layouts, AUDIO_LAYOUT_STEREO);
    retro_atomic_store_release_int(&st->pipe_ctrl_avail, -1);
    if (!retro_spsc_init(&st->pipe_ring, 1 << 22))
       return false;
@@ -817,7 +818,7 @@ static void stereo_ring_format_case(bool source_float, bool ring_float)
       for (c = 2 * sample; c < st->pipe_frame_bytes; c++)
          CHECK(actual[f * st->pipe_frame_bytes + c] == 0, "stereo ring extra slot is not silent");
    }
-   CHECK((unsigned)retro_atomic_load_acquire_int(&st->pipe_layout) == AUDIO_LAYOUT_STEREO,
+   CHECK(st->pipe_layout == AUDIO_LAYOUT_STEREO,
          "stereo ring layout changed");
 end:
    free(actual); free(expected); free(ini); free(inf);
@@ -935,7 +936,9 @@ static void wide_wrap_case(bool floating)
          retro_atomic_size_init(&st->pipe_ring.tail, start);
          st->pipe_ring.cached_head = st->pipe_ring.cached_tail = start;
       }
-      retro_atomic_store_release_int(&st->pipe_layout, AUDIO_LAYOUT_5POINT1);
+      CHECK(audio_pipeline_layout_publish(&st->pipe_layouts,
+               retro_atomic_load_relaxed_size(&st->pipe_ring.head), AUDIO_LAYOUT_5POINT1),
+            "wide wrap layout publish");
       CHECK(retro_spsc_write_frames(&st->pipe_ring, &input, frames, st->pipe_frame_bytes) == frames,
             "wide wrap input publish");
       audio_driver_pipeline_consume(st);
@@ -959,6 +962,122 @@ static void wide_wrap_case(bool floating)
    free(reference);
 }
 
+static void layout_epoch_case(bool floating, bool wrapped)
+{
+   static const unsigned layouts[] = { AUDIO_LAYOUT_5POINT1, AUDIO_LAYOUT_STEREO,
+      AUDIO_LAYOUT_7POINT1, AUDIO_LAYOUT_5POINT1 };
+   union { float f[128 * 8]; int16_t i[128 * 8]; } input;
+   audio_driver_state_t *st = &audio_driver_st;
+   float *reference = NULL;
+   size_t reference_frames = 0, f;
+   unsigned queued, block;
+   for (queued = 0; queued < 2; queued++)
+   {
+      bool ready = pipe_up(floating, floating);
+      CHECK(ready, "layout epoch stand-up");
+      if (!ready) { free(reference); return; }
+      if (wrapped)
+      {
+         size_t start = st->pipe_ring.capacity - st->pipe_frame_bytes * 64;
+         retro_atomic_size_init(&st->pipe_ring.head, start);
+         retro_atomic_size_init(&st->pipe_ring.tail, start);
+         st->pipe_ring.cached_head = st->pipe_ring.cached_tail = start;
+      }
+      for (block = 0; block < 4; block++)
+      {
+         unsigned channels = audio_layout_channels(layouts[block]);
+         for (f = 0; f < 128 * channels; f++)
+         {
+            int16_t v = (int16_t)((int)((f * 97 + block * 7919) % 30000) - 15000);
+            if (floating) input.f[f] = v / 32768.0f;
+            else input.i[f] = v;
+         }
+         if (channels == 2)
+            audio_driver_submit(st, 1.0f, &input, 256, floating, false, false);
+         else
+            CHECK(audio_driver_multi_pipe(st, &input, 128, channels, layouts[block], floating),
+                  "layout epoch input publish");
+         if (!queued) audio_driver_pipeline_consume(st);
+      }
+      /* A bounded loop also catches a stranded boundary without hanging. */
+      for (block = 0; block < 8 && retro_spsc_read_avail(&st->pipe_ring); block++)
+         audio_driver_pipeline_consume(st);
+      CHECK(!retro_spsc_read_avail(&st->pipe_ring), "layout epoch input stranded");
+      CHECK(cap_frames > 0, "layout epoch has no device output");
+      if (!queued)
+      {
+         reference_frames = cap_frames;
+         reference = (float*)malloc(cap_frames * 6 * sizeof(float));
+         CHECK(reference != NULL, "layout epoch reference allocation");
+         if (reference) memcpy(reference, cap, cap_frames * 6 * sizeof(float));
+      }
+      else
+      {
+         CHECK(cap_frames == reference_frames, "layout epoch frame count differs");
+         if (reference && cap_frames == reference_frames)
+            CHECK(!memcmp(reference, cap, cap_frames * 6 * sizeof(float)),
+                  "queued layout changes reinterpret old samples");
+      }
+   }
+   free(reference);
+}
+
+static size_t epoch_underrun(void *data) { (void)data; return 1; }
+
+static void layout_epoch_pressure_case(bool floating)
+{
+   audio_driver_state_t *st = &audio_driver_st;
+   union { float f[11]; int16_t i[11]; } input;
+   size_t held;
+   unsigned i;
+   bool sync = config_get_ptr()->bools.audio_sync;
+   bool ready = pipe_up(floating, floating);
+   CHECK(ready, "epoch pressure stand-up");
+   if (!ready) return;
+   memset(&input, 0, sizeof(input));
+   for (i = 0; i < AUDIO_PIPELINE_LAYOUT_CAPACITY; i++)
+   {
+      st->pipe_layout = i & 1 ? AUDIO_LAYOUT_7POINT1 : AUDIO_LAYOUT_5POINT1;
+      audio_driver_submit_width(st, 1.0f, &input, 11, floating, false, false, 11);
+   }
+   held = retro_spsc_read_avail(&st->pipe_ring);
+   CHECK(held == AUDIO_PIPELINE_LAYOUT_CAPACITY * st->pipe_frame_bytes,
+         "epoch pressure did not fill metadata");
+   st->pipe_layout = AUDIO_LAYOUT_STEREO;
+   {
+      bool speedup = config_get_ptr()->bools.audio_fastforward_speedup;
+      config_get_ptr()->bools.audio_fastforward_speedup = true;
+      audio_driver_submit_width(st, 1.0f, &input, 11, floating, false, true, 11);
+      config_get_ptr()->bools.audio_fastforward_speedup = speedup;
+      CHECK(st->last_flush_time > 0, "metadata pressure skipped source cadence accounting");
+   }
+   CHECK(retro_spsc_read_avail(&st->pipe_ring) == held,
+         "unlabelled frame entered a full metadata queue");
+   st->pipe_priming = true;
+   audio_driver_pipeline_consume(st);
+   CHECK(!st->pipe_priming && retro_spsc_read_avail(&st->pipe_ring) < held,
+         "full metadata deadlocked startup priming");
+   retro_atomic_store_release_int(&st->runloop_snapshot, AUDIO_SNAP_PAUSED);
+   for (i = 0; i < AUDIO_PIPELINE_LAYOUT_CAPACITY && retro_spsc_read_avail(&st->pipe_ring); i++)
+      audio_driver_pipeline_consume(st);
+   CHECK(!retro_spsc_read_avail(&st->pipe_ring), "pause did not drain epoch audio");
+   /* Underrun discard crosses all outstanding boundaries and releases space. */
+   retro_atomic_store_release_int(&st->runloop_snapshot, 0);
+   audio_driver_submit_width(st, 1.0f, &input, 11, floating, false, false, 11);
+   st->pipe_layout = AUDIO_LAYOUT_5POINT1;
+   audio_driver_submit_width(st, 1.0f, &input, 11, floating, false, false, 11);
+   scripted_threaded.underruns = epoch_underrun;
+   st->buffer_size = 0;
+   config_get_ptr()->bools.audio_sync = false;
+   cap_frames = 0;
+   audio_driver_pipeline_consume(st);
+   CHECK(!retro_spsc_read_avail(&st->pipe_ring) && !cap_frames,
+         "underrun discard replayed stale scratch");
+   CHECK(st->pipe_layouts.current_layout == AUDIO_LAYOUT_5POINT1,
+         "discard did not retire layout boundaries");
+   config_get_ptr()->bools.audio_sync = sync;
+}
+
 int main(void)
 {
    /* One case at a time, for when a single one is being worked on:
@@ -970,6 +1089,12 @@ int main(void)
    RUN("suspended", suspended_multichannel_case(false, true));
    RUN("suspended", suspended_multichannel_case(true, false));
    RUN("suspended", suspended_multichannel_case(false, false));
+   RUN("epoch", layout_epoch_pressure_case(false));
+   RUN("epoch", layout_epoch_pressure_case(true));
+   RUN("epoch", layout_epoch_case(false, false));
+   RUN("epoch", layout_epoch_case(true, false));
+   RUN("epoch", layout_epoch_case(false, true));
+   RUN("epoch", layout_epoch_case(true, true));
    RUN("wrap", wide_wrap_case(false));
    RUN("wrap", wide_wrap_case(true));
    RUN("fullring", full_wide_ring_case(false));

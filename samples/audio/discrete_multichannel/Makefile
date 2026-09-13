@@ -84,6 +84,8 @@ $(GEN): $(WASAPI_SRC)
 %.o: %.c
 	$(CC) $(INCDIRS) $(CFLAGS) $(flags) -c -o$@ $<
 
+discrete_multichannel_test.o: ../../../audio/audio_driver.c ../../../audio/audio_driver.h ../../../audio/audio_pipeline_layout.h
+
 $(TARGET): $(OBJS)
 	$(CC) -o$@ $(OBJS) $(LDFLAGS)
 

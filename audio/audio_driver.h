@@ -52,6 +52,7 @@ typedef struct scond scond_t;
 #include "audio_defines.h"
 #include "audio_upmix.h"
 #include "audio_binaural.h"
+#include "audio_pipeline_layout.h"
 
 #define AUDIO_BUFFER_FREE_SAMPLES_COUNT (8 * 1024)
 
@@ -577,12 +578,11 @@ typedef struct
     * canonical frame of every position, AUDIO_PIPE_CANON_CHANNELS
     * wide, a slot per speaker bit, the ones the batch lacks zero. A
     * fixed width, so the ring is never switched under the consumer;
-    * the layout of the frames in it is published per batch through
-    * pipe_layout, read once a pass, and says which slots are the
-    * core's. pipe_wide is the consumer's bounce for a pass of the
+    * layout boundaries travel through pipe_layouts before audio publication.
+    * pipe_wide is the consumer's bounce for a pass of the
     * frame; pipe_canon the producer's staging for building it. */
    unsigned pipe_channels;
-   retro_atomic_int_t pipe_layout;
+   unsigned pipe_layout; /* producer-only requested layout */
    uint8_t *pipe_wide;
    size_t   pipe_wide_bytes;
    uint8_t *pipe_canon;
@@ -850,6 +850,8 @@ typedef struct
    bool             virtualize;
    audio_binaural_t binaural;
    float           *virt_buf;      /* frames * 6 floats, the virtual 5.1 */
+   /* Keep existing hot audio fields together when adding transport state. */
+   audio_pipeline_layout_t pipe_layouts;
 } audio_driver_state_t;
 
 bool audio_driver_enable_callback(void);

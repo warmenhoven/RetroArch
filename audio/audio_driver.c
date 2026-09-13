@@ -3347,7 +3347,8 @@ bool audio_driver_init_internal(void *settings_data, bool audio_cb_inited)
             ? AUDIO_PIPE_CANON_CHANNELS : 2;
       audio_driver_st.pipe_frame_bytes = audio_driver_st.pipe_channels
             * (audio_driver_st.pipe_float ? sizeof(float) : sizeof(int16_t));
-      retro_atomic_store_release_int(&audio_driver_st.pipe_layout, (int)AUDIO_LAYOUT_STEREO);
+      audio_driver_st.pipe_layout = AUDIO_LAYOUT_STEREO;
+      audio_pipeline_layout_init(&audio_driver_st.pipe_layouts, AUDIO_LAYOUT_STEREO);
       bytes            = frames * audio_driver_st.pipe_frame_bytes;
       if (bytes < 4096)
          bytes         = 4096;
@@ -4075,7 +4076,7 @@ static void audio_driver_submit_width(audio_driver_state_t *audio_st,
          size_t pass = (AUDIO_PIPE_SLICE_INT16S / 2) * 2 / pc;
          size_t sample = is_float ? sizeof(float) : sizeof(int16_t);
          size_t stereo_frames = samples >> 1;
-         retro_atomic_store_release_int(&audio_st->pipe_layout, (int)AUDIO_LAYOUT_STEREO);
+         audio_st->pipe_layout = AUDIO_LAYOUT_STEREO;
          while (stereo_frames)
          {
             size_t n = stereo_frames > pass ? pass : stereo_frames;
@@ -4170,6 +4171,12 @@ static void audio_driver_submit_width(audio_driver_state_t *audio_st,
                   * 65536.0));
       else
          audio_driver_ff_mult_reset(audio_st);
+      /* Never publish samples without their preceding layout boundary. */
+      if (pc > 2 && len && !audio_pipeline_layout_publish(&audio_st->pipe_layouts,
+               retro_atomic_load_relaxed_size(&audio_st->pipe_ring.head),
+               audio_st->pipe_layout))
+         len = 0;
+
       while (len)
       {
          unsigned gen;
@@ -4307,6 +4314,18 @@ static void audio_driver_pipeline_consume(audio_driver_state_t *audio_st)
          slock_unlock(audio_st->pipe_lock);
          return;
       }
+      /* A full metadata queue must not deadlock startup priming. */
+      if (audio_st->pipe_channels > 2
+            && retro_atomic_load_acquire_size(&audio_st->pipe_layouts.head)
+             - retro_atomic_load_relaxed_size(&audio_st->pipe_layouts.tail)
+                  == AUDIO_PIPELINE_LAYOUT_CAPACITY)
+      {
+         size_t bytes = retro_spsc_read_avail(&audio_st->pipe_ring);
+         if (bytes >= audio_st->pipe_frame_bytes) break;
+         audio_pipeline_layout_limit(&audio_st->pipe_layouts,
+               retro_atomic_load_relaxed_size(&audio_st->pipe_ring.tail),
+               0, audio_st->pipe_ring.capacity);
+      }
       gen = audio_st->pipe_data_gen;
       if (!scond_wait_timeout(audio_st->pipe_data_cond, audio_st->pipe_lock,
                AUDIO_PIPE_WAIT_MAX_US))
@@ -4404,6 +4423,29 @@ static void audio_driver_pipeline_consume(audio_driver_state_t *audio_st)
                break;
             held -= take;
          }
+         if (have > held / audio_st->pipe_frame_bytes)
+            have = held / audio_st->pipe_frame_bytes;
+      }
+   }
+
+   /* Discards can cross boundaries and reduce the earlier availability. */
+   {
+      size_t bytes = have * audio_st->pipe_frame_bytes;
+      if (audio_st->pipe_channels > 2)
+      {
+         size_t limited = audio_pipeline_layout_limit(&audio_st->pipe_layouts,
+               retro_atomic_load_relaxed_size(&audio_st->pipe_ring.tail),
+               bytes, audio_st->pipe_ring.capacity);
+         if (limited < bytes) have = limited / audio_st->pipe_frame_bytes;
+      }
+      if (!have)
+      {
+         slock_lock(audio_st->pipe_lock);
+         audio_st->pipe_gen++;
+         audio_st->pipe_stalled = false;
+         scond_signal(audio_st->pipe_cond);
+         slock_unlock(audio_st->pipe_lock);
+         return;
       }
    }
 
@@ -4443,13 +4485,9 @@ static void audio_driver_pipeline_consume(audio_driver_state_t *audio_st)
 
    if (audio_st->pipe_channels > 2)
    {
-      /* the canonical frame: the fronts to the scratch the flush
-       * takes, the slots of the batch's layout to the extras beside
-       * it; the layout is what the producer published last, and a
-       * pass that straddles a change takes a slot or two from the
-       * wrong side of it for that pass */
+      /* This pass ends before the next layout boundary. */
       const unsigned pc = audio_st->pipe_channels;
-      uint32_t layout   = (uint32_t)retro_atomic_load_acquire_int(&audio_st->pipe_layout);
+      uint32_t layout   = audio_st->pipe_layouts.current_layout;
       uint32_t pos      = layout & ~AUDIO_LAYOUT_STEREO;
       unsigned ex       = audio_layout_channels(pos);
       unsigned slot[AUDIO_PIPE_CANON_CHANNELS];
@@ -4808,7 +4846,7 @@ static bool audio_driver_multi_pipe(audio_driver_state_t *audio_st,
    for (bit = 0; bit < pc; bit++)
       if (layout & (1u << bit))
          slot[n++] = bit;
-   retro_atomic_store_release_int(&audio_st->pipe_layout, (int)layout);
+   audio_st->pipe_layout = layout;
    while (done < frames)
    {
       size_t take = frames - done;
