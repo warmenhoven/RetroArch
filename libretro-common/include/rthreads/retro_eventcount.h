@@ -75,12 +75,11 @@
  *    one retro_eventcount_commit_wait() or retro_eventcount_cancel_wait()
  *    on the same thread.
  *
- * 2. Between prepare_wait and its answer, do nothing but evaluate the
- *    predicate.  Do not block, do not call notify, do not take a lock.
- *    On the backends that have no address-wait primitive the window is
- *    covered by a mutex this object holds for you, so anything else in
- *    there risks a deadlock that the address-wait backends would not
- *    show.
+ * 2. No lock is held across that window on any backend, so the window
+ *    is yours: evaluating a predicate that touches other objects is
+ *    fine.  Keep it short anyway.  A notifier that sees a registered
+ *    waiter does the wake work whether or not the waiter goes on to
+ *    sleep, so a long window buys a notifier pointless syscalls.
  *
  * 3. Any number of threads may notify.  Any number may wait; a notify
  *    releases all of them.
@@ -96,10 +95,14 @@
  * Backends
  * --------
  *   Linux / Android      futex(FUTEX_WAIT_PRIVATE), no lock at all
- *   Windows 8 and newer  WaitOnAddress, resolved at runtime so the same
- *                        binary still starts on 9x and XP
- *   everything else      rthreads scond, with the lock taken only when a
- *                        waiter is actually registered
+ *   Windows              a waiter list of stack blocks, slept on with the
+ *                        best primitive ntdll offers, resolved at runtime:
+ *                        NtWaitForAlertByThreadId on 8 and newer,
+ *                        NtWaitForKeyedEvent back to XP, and a per-thread
+ *                        auto-reset event on anything older, including 9x.
+ *                        No mutex on any tier.
+ *   everything else      rthreads scond, with the lock taken only across
+ *                        the sleep itself
  *
  * The scond backend is not a degraded mode; it is correct and it is what
  * macOS, the BSDs and the console ports use.  What it costs is one lock
@@ -124,8 +127,15 @@ RETRO_BEGIN_DECLS
  * translation unit that includes both is then legal C89. */
 typedef struct retro_eventcount
 {
-   struct slock       *lock;    /* NULL when the backend parks on an address */
-   struct scond       *cond;    /* NULL when the backend parks on an address */
+   struct slock       *lock;    /* NULL unless the backend needs a condvar   */
+   struct scond       *cond;    /* NULL unless the backend needs a condvar   */
+#if defined(_WIN32) && !defined(_XBOX) && defined(RETRO_ATOMIC_HAS_PTR)
+   /* Win32 keeps its own waiter list: the blocks live on the waiters'
+    * stacks and the low bit of the head is the list's spin lock.  No
+    * caller mutex is involved, which is the whole point of it -- a
+    * condition variable would re-acquire one on every wake. */
+   retro_atomic_ptr_t  waitlist;
+#endif
    retro_atomic_int_t  epoch;   /* bumped once per notify                    */
    retro_atomic_int_t  waiters; /* threads inside a prepare/commit window    */
 } retro_eventcount_t;
