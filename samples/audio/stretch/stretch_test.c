@@ -1141,6 +1141,53 @@ static void bound_budget_cases(void)
    }
 }
 
+static void stream_quiescence(void)
+{
+   unsigned native, iteration;
+   CHECK(audio_stretch_stream_quiescent(NULL));
+   for (native = 0; native < 2; native++)
+   {
+      audio_stretch_stream_t *s = audio_stretch_stream_new(48000, 8, native, 1);
+      void *block = native ? (void*)output_f[0] : (void*)output_i[0];
+      const void *input = native ? (const void*)input_f : (const void*)input_i;
+      size_t used, count;
+      bool complete;
+      fill(8);
+      guarded = 1;
+      CHECK(audio_stretch_stream_quiescent(s));
+      CHECK(audio_stretch_stream_bind(s, block, 1));
+      CHECK(audio_stretch_stream_quiescent(s));
+      CHECK(audio_stretch_stream_push(s, input, 1, &used, 1, false));
+      CHECK(!audio_stretch_stream_quiescent(s));
+      CHECK(audio_stretch_stream_consume(s, 1));
+      CHECK(audio_stretch_stream_quiescent(s));
+      CHECK(audio_stretch_stream_push(s, input, 256, &used, 4, true));
+      CHECK(!audio_stretch_stream_quiescent(s));
+      /* Exit must remain non-quiescent through staging and pending output. */
+      for (iteration = 0; iteration < 4096 && !audio_stretch_stream_quiescent(s); iteration++)
+      {
+         CHECK(audio_stretch_stream_push(s, NULL, 0, &used, 1, false));
+         audio_stretch_stream_peek(s, &count);
+         if (count) CHECK(!audio_stretch_stream_quiescent(s));
+         CHECK(audio_stretch_stream_consume(s, count));
+      }
+      CHECK(audio_stretch_stream_quiescent(s));
+      CHECK(iteration > 1 && iteration < 4096);
+      CHECK(audio_stretch_stream_finish(s, &complete) && complete);
+      CHECK(!audio_stretch_stream_quiescent(s));
+      audio_stretch_stream_reset(s);
+      CHECK(audio_stretch_stream_quiescent(s));
+      /* Reset invalidates an unacknowledged native block. */
+      CHECK(audio_stretch_stream_push(s, input, 256, &used, 4, true));
+      CHECK(!audio_stretch_stream_quiescent(s));
+      audio_stretch_stream_reset(s);
+      CHECK(audio_stretch_stream_quiescent(s));
+      CHECK(!audio_stretch_stream_peek(s, &count) && !count);
+      guarded = 0;
+      audio_stretch_stream_free(s);
+   }
+}
+
 int main(void)
 {
    contracts();
@@ -1160,6 +1207,7 @@ int main(void)
    bound_cases();
    adapter_direct_active();
    bound_budget_cases();
+   stream_quiescence();
    CHECK(heap_calls == 0);
    printf("stretch: %u failures, %u processing/reset heap calls\n", failures, heap_calls);
    return failures != 0;

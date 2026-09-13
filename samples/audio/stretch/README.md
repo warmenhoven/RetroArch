@@ -222,3 +222,19 @@ Tests compare varying limits (0, 1, 7, 127 and SIZE_MAX) against direct adapter
 calls, including pending-output zero-budget control requests and EOF. The real
 SRC chain fixture now varies production budgets from 1..23 and drains EOF in
 seven-frame budgets while retaining exact reference output.
+
+## Quiescent handoff and stream reset
+
+The consumer may bypass the adapter only when the desired mode is inactive and
+`audio_stretch_stream_quiescent` returns true. The query requires raw state with
+no retained or unacknowledged output; binding storage alone does not prevent
+quiescence. EOF is not quiescent until reset. NULL denotes an absent adapter.
+This is a read-only single-owner query, not a cross-thread synchronization API.
+
+At a discontinuity, the owner must reset both the stretch stream and all native
+SRC instances, and discard any old device-format output under its ownership.
+The chain fixture now dirties SRC history and leaves bound stretch output
+unacknowledged, resets both while allocation guards are active, then checks
+reused processing against a fresh chain for all tested ratios/layouts/formats.
+Quiescence tests include one-frame output backpressure, exit, EOF and reset.
+Frontend epoch publication and the actual bypass hook remain unimplemented.

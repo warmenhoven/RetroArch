@@ -609,6 +609,12 @@ void audio_stretch_stream_reset(audio_stretch_stream_t *s)
    s->bound_count = s->bound_read = 0;
 }
 
+bool audio_stretch_stream_quiescent(const audio_stretch_stream_t *s)
+{
+   return !s || (s->phase == ASTRETCH_STREAM_RAW && !s->bound_count
+         && !s->count && !s->eof);
+}
+
 static void astretch_stream_pump(audio_stretch_stream_t *s,
       struct audio_stretch_io *io, double tempo, bool active)
 {

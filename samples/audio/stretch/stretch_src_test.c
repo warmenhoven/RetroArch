@@ -144,6 +144,20 @@ int main(void)
                   CHECK(audio_stretch_stream_bind(stream, &block, capacity));
                   chain_init(channels, native, 1, ratios[ratio], hq);
                   guarded = 1;
+                  /* Abandon an old stream with both SRC history and pending
+                   * native output, then reuse every allocation. */
+                  CHECK(audio_stretch_stream_push(stream, input, 512, &n, 2.0, true));
+                  view = audio_stretch_stream_peek(stream, &count);
+                  CHECK(count > 0);
+                  chain_accept(view, count > 7 ? 7 : count);
+                  CHECK(!audio_stretch_stream_quiescent(stream));
+                  audio_stretch_stream_reset(stream);
+                  CHECK(audio_stretch_stream_quiescent(stream));
+                  CHECK(!audio_stretch_stream_peek(stream, &count) && !count);
+                  for (stage = 0; stage < channels / 2; stage++)
+                     if (native) sinc_resampler.reset(chain_state.resampler[stage]);
+                     else sinc_resampler_int16_reset(chain_state.resampler[stage]);
+                  chain_state.source = chain_state.produced = 0;
                   for (stage = 0; stage < 4; stage++)
                      while (used < (stage + 1) * (FRAMES / 4))
                      {
