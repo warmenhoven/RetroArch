@@ -102,7 +102,14 @@
  *   retro_atomic_cas_int        - strong CAS, non-zero on success
  *   retro_atomic_cas_ptr        - strong CAS on a pointer, non-zero on success
  *   retro_atomic_*_ptr          - pointer-width load/store/exchange
- *   retro_atomic_thread_fence_* - acquire / release fences
+ *   retro_atomic_thread_fence_* - acquire / release / seq_cst fences.
+ *                                 The seq_cst fence is the one that
+ *                                 orders a store against a later load
+ *                                 of a different location, which an
+ *                                 acq_rel RMW does not: it is what a
+ *                                 Dekker-shaped handshake needs, and
+ *                                 retro_eventcount is the caller that
+ *                                 needs it.
  *   (extended ops absent on the volatile fallback; gate with
  *    RETRO_ATOMIC_HAS_CAS / RETRO_ATOMIC_HAS_PTR)
  *
@@ -1099,7 +1106,7 @@ static INLINE size_t retro_atomic_fetch_sub_size_fb(retro_atomic_size_t *p,
  * the same per-backend ladder as the core surface.  Added for callers
  * migrating off std::atomic wholesale (libretro-pcsx2), whose remaining
  * sites need exactly these: a read-and-clear (exchange), one CAS loop,
- * lock-free pointer handoff, and a pair of fences.
+ * lock-free pointer handoff, and the fences.
  *
  * cas_int is strong and evaluates to non-zero on success; there is no
  * expected-out parameter - on failure the caller re-reads - keeping
@@ -1144,6 +1151,8 @@ static INLINE int retro_atomic_cas_ptr_impl_(retro_atomic_ptr_t *p, void *expect
    atomic_thread_fence(memory_order_acquire)
 #define retro_atomic_thread_fence_release() \
    atomic_thread_fence(memory_order_release)
+#define retro_atomic_thread_fence_seq_cst() \
+   atomic_thread_fence(memory_order_seq_cst)
 #define RETRO_ATOMIC_HAS_CAS 1
 #define RETRO_ATOMIC_HAS_PTR 1
 
@@ -1183,6 +1192,8 @@ static INLINE int retro_atomic_cas_ptr_impl_(retro_atomic_ptr_t *p, void *expect
    std::atomic_thread_fence(std::memory_order_acquire)
 #define retro_atomic_thread_fence_release() \
    std::atomic_thread_fence(std::memory_order_release)
+#define retro_atomic_thread_fence_seq_cst() \
+   std::atomic_thread_fence(std::memory_order_seq_cst)
 #define RETRO_ATOMIC_HAS_CAS 1
 #define RETRO_ATOMIC_HAS_PTR 1
 
@@ -1222,6 +1233,8 @@ static INLINE int retro_atomic_cas_ptr_impl_(retro_atomic_ptr_t *p, void *expect
    __atomic_thread_fence(__ATOMIC_ACQUIRE)
 #define retro_atomic_thread_fence_release() \
    __atomic_thread_fence(__ATOMIC_RELEASE)
+#define retro_atomic_thread_fence_seq_cst() \
+   __atomic_thread_fence(__ATOMIC_SEQ_CST)
 #define RETRO_ATOMIC_HAS_CAS 1
 #define RETRO_ATOMIC_HAS_PTR 1
 
@@ -1255,6 +1268,7 @@ static INLINE int retro_atomic_cas_int_impl_(retro_atomic_int_t *p, int expected
          (void*)(expected)) == (void*)(expected))
 #define retro_atomic_thread_fence_acquire() MemoryBarrier()
 #define retro_atomic_thread_fence_release() MemoryBarrier()
+#define retro_atomic_thread_fence_seq_cst() MemoryBarrier()
 #define RETRO_ATOMIC_HAS_CAS 1
 #define RETRO_ATOMIC_HAS_PTR 1
 
@@ -1303,6 +1317,7 @@ static INLINE void* retro_atomic_exchange_ptr_impl_(retro_atomic_ptr_t *p, void*
    OSAtomicCompareAndSwapPtrBarrier((void*)(expected), (void*)(desired), (void* volatile*)(p))
 #define retro_atomic_thread_fence_acquire() OSMemoryBarrier()
 #define retro_atomic_thread_fence_release() OSMemoryBarrier()
+#define retro_atomic_thread_fence_seq_cst() OSMemoryBarrier()
 #define RETRO_ATOMIC_HAS_CAS 1
 #define RETRO_ATOMIC_HAS_PTR 1
 
@@ -1346,6 +1361,7 @@ static INLINE void* retro_atomic_exchange_ptr_impl_(retro_atomic_ptr_t *p, void*
    __sync_bool_compare_and_swap((void* volatile*)(p), (void*)(expected), (void*)(desired))
 #define retro_atomic_thread_fence_acquire() __sync_synchronize()
 #define retro_atomic_thread_fence_release() __sync_synchronize()
+#define retro_atomic_thread_fence_seq_cst() __sync_synchronize()
 #define RETRO_ATOMIC_HAS_CAS 1
 #define RETRO_ATOMIC_HAS_PTR 1
 
@@ -1417,6 +1433,8 @@ static INLINE int retro_atomic_ee_cas_ptr_(retro_atomic_ptr_t *p,
    __asm__ __volatile__("" ::: "memory")
 #define retro_atomic_thread_fence_release() \
    __asm__ __volatile__("" ::: "memory")
+#define retro_atomic_thread_fence_seq_cst() \
+   __asm__ __volatile__("" ::: "memory")
 #define RETRO_ATOMIC_HAS_CAS 1
 #define RETRO_ATOMIC_HAS_PTR 1
 
@@ -1440,12 +1458,16 @@ static INLINE int retro_atomic_ee_cas_ptr_(retro_atomic_ptr_t *p,
    __asm__ __volatile__("" ::: "memory")
 #define retro_atomic_thread_fence_release() \
    __asm__ __volatile__("" ::: "memory")
+#define retro_atomic_thread_fence_seq_cst() \
+   __asm__ __volatile__("" ::: "memory")
 #elif defined(_MSC_VER)
 #define retro_atomic_thread_fence_acquire() _ReadWriteBarrier()
 #define retro_atomic_thread_fence_release() _ReadWriteBarrier()
+#define retro_atomic_thread_fence_seq_cst() _ReadWriteBarrier()
 #else
 #define retro_atomic_thread_fence_acquire() ((void)0)
 #define retro_atomic_thread_fence_release() ((void)0)
+#define retro_atomic_thread_fence_seq_cst() ((void)0)
 #endif
 #endif
 
