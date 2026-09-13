@@ -2,21 +2,28 @@ CC = gcc
 ROOT = ../../..
 CPPFLAGS += -I$(ROOT)/libretro-common/include
 CFLAGS += -O2 -std=c89 -Wall -Wextra
-LDFLAGS += -Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc -Wl,--wrap=free
+WRAP_LDFLAGS = -Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc -Wl,--wrap=free
 LDLIBS += -lm
 ifneq ($(SANITIZER),)
 CFLAGS += -fsanitize=$(SANITIZER) -fno-omit-frame-pointer -g
 LDFLAGS += -fsanitize=$(SANITIZER)
 endif
 SOURCES = stretch_test.c $(ROOT)/audio/audio_stretch.c
-all: stretch_test stretch_src_test
+all: stretch_test stretch_src_test stretch_search_test
 stretch_test: $(SOURCES) $(ROOT)/audio/audio_stretch.h $(ROOT)/libretro-common/include/audio/wsola_search.h
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(SOURCES) $(LDFLAGS) $(LDLIBS) -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(SOURCES) $(LDFLAGS) $(WRAP_LDFLAGS) $(LDLIBS) -o $@
 stretch_src_test: stretch_src_test.c $(SOURCES) $(ROOT)/libretro-common/audio/resampler/drivers/sinc_resampler.c $(ROOT)/libretro-common/audio/resampler/drivers/sinc_resampler_int16.c $(ROOT)/libretro-common/memmap/memalign.c
-	$(CC) $(CPPFLAGS) $(CFLAGS) stretch_src_test.c $(ROOT)/audio/audio_stretch.c $(ROOT)/libretro-common/audio/resampler/drivers/sinc_resampler.c $(ROOT)/libretro-common/audio/resampler/drivers/sinc_resampler_int16.c $(ROOT)/libretro-common/memmap/memalign.c $(LDFLAGS) $(LDLIBS) -o $@
-check: stretch_test stretch_src_test
+	$(CC) $(CPPFLAGS) $(CFLAGS) stretch_src_test.c $(ROOT)/audio/audio_stretch.c $(ROOT)/libretro-common/audio/resampler/drivers/sinc_resampler.c $(ROOT)/libretro-common/audio/resampler/drivers/sinc_resampler_int16.c $(ROOT)/libretro-common/memmap/memalign.c $(LDFLAGS) $(WRAP_LDFLAGS) $(LDLIBS) -o $@
+stretch_search_test: stretch_search_test.c $(ROOT)/audio/audio_stretch.c $(ROOT)/audio/audio_stretch.h $(ROOT)/libretro-common/include/audio/wsola_search.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) stretch_search_test.c $(LDFLAGS) $(LDLIBS) -o $@
+stretch_bench: stretch_bench.c $(ROOT)/audio/audio_stretch.c $(ROOT)/audio/audio_stretch.h $(ROOT)/libretro-common/include/audio/wsola_search.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) stretch_bench.c $(ROOT)/audio/audio_stretch.c $(LDFLAGS) $(LDLIBS) -o $@
+bench: stretch_bench
+	./stretch_bench
+check: stretch_test stretch_src_test stretch_search_test
 	./stretch_test
 	./stretch_src_test
+	./stretch_search_test
 clean:
-	rm -f stretch_test stretch_test.exe stretch_src_test stretch_src_test.exe
-.PHONY: all check clean
+	rm -f stretch_test stretch_test.exe stretch_src_test stretch_src_test.exe stretch_search_test stretch_search_test.exe stretch_bench stretch_bench.exe
+.PHONY: all check clean bench

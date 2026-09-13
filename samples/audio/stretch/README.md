@@ -238,3 +238,31 @@ unacknowledged, resets both while allocation guards are active, then checks
 reused processing against a fresh chain for all tested ratios/layouts/formats.
 Quiescence tests include one-frame output backpressure, exit, EOF and reset.
 Frontend epoch publication and the actual bypass hook remain unimplemented.
+
+
+## Search oracle and throughput benchmark
+
+`make check` also runs `stretch_search_test`: 2,520 search states across both
+native formats, seven rates, mono/stereo/5.1/7.1, wrapped rings, clipped search
+windows, channel masks, silence, full-scale constants, alternating extrema,
+impulses and deterministic noise. The oracle gathers each candidate directly
+from the ring and uses the existing correlation kernels, independently of the
+production search staging and ranking loop. It checks search decisions, not
+an independent mathematical implementation of the correlation kernels.
+
+Build `make stretch_bench`, then run `./stretch_bench 2 200` for seven timed
+trials per format/rate/channel combination at tempo 2. The second argument is
+the minimum milliseconds per trial (default 50). The CSV reports the median
+nanoseconds per input frame; lower is better. Tempo accepts 0.25 through 32.
+Each trial warms the real stream adapter, then processes repeated 8,192-frame
+native blocks without resetting between blocks. Initialization, warmup, sample
+generation and reset are outside timing. Every call verifies complete source
+consumption; this benchmark does not measure exit/drain or device work.
+
+Use identical compilers, flags, benchmark source, tempo and CPU affinity for
+baseline/candidate builds. Alternate process order and repeat runs on an idle
+machine. `clock()` resolution and scheduling differ across hosts: increase the
+trial duration for small differences. Do not run performance acceptance under
+sanitizers, or treat one median as proof of no regression. The float and int16
+rows must both be checked. `make bench` is optional and is not part of CI;
+the search oracle runs through the existing scalar/SIMD sanitizer check job.
