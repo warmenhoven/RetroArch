@@ -33,21 +33,35 @@ one hop for partial-output calls. Zero output capacity consumes nothing. Invalid
 parameters return false and leave state unchanged (result counts are zeroed).
 Input/output storage must not overlap, and its sample format must match creation.
 
-Startup needs two hops of input; later search also needs lookahead. There is no
-EOF zero-padding or tail-flush operation. Zero-input calls can drain a pending
-output hop, and reset discards all pending/history state without freeing storage.
-The frontend integration must handle entry/exit crossfades and source tails,
-stream epochs, and short device writes explicitly before exposing a mode.
+Startup needs two hops of input; later search also needs lookahead. Zero-input
+process calls can emit a pending synthesized hop. To exit or end a finite input,
+`audio_stretch_drain` returns pending synthesis, the last overlap, and source
+lookahead not already represented by that overlap. Nothing is padded, synthesized
+or converted by drain. Repeated partial calls preserve order and report complete
+only after all available tail data has been emitted. A positive-capacity drain
+call latches drain mode; process then rejects requests until reset. Zero-capacity
+drain calls are non-mutating queries. Reset discards retained data without freeing
+storage, including a partially drained tail.
+
+High-tempo processing may already have skipped source beyond the last overlap.
+Drain reports that gap once via `gap_offset`, relative to the current output
+buffer. The marker may equal `output_frames`, even on the final call: the gap
+then precedes future caller input. Otherwise `(size_t)-1` means no new marker.
+The owner must retain enough transition context to reconcile that discontinuity
+(e.g. crossfade); the drain API does not invent skipped audio or guarantee a
+click-free boundary. Entry/exit crossfades, stream epochs and device short writes
+still require frontend integration before exposing a transport mode.
 
 `make check` builds C89 tests and guards heap calls during processing/reset.
 `make -B check CC="gcc -DAUDIO_STRETCH_SCALAR"` tests scalar selection.
 `SANITIZER=address,undefined` is supported by the Linux CI target. Tests cover
 fragmentation, canaries, fractional consumption, invalid requests, backpressure,
-reset, full-scale integer samples, anti-phase/coherent channels, LFE exclusion
+reset, partial native tail drains, gap markers, full-scale integer samples,
+anti-phase/coherent channels, LFE exclusion
 from the reference, duration bounds and a coarse 440 Hz pitch check. They do not
 constitute listening or device-latency acceptance.
 
 The tests print allocated bytes (including state) for 2/6/8 channels at several
-rates. On x86-64, 48 kHz uses 4,472/9,592/12,152 bytes for int16 and
-7,288/17,528/22,648 bytes for float. The largest supported eight-channel float
-instance uses 90,232 bytes at 192 kHz. ABI padding can change these figures.
+rates. On x86-64, 48 kHz uses 4,488/9,608/12,168 bytes for int16 and
+7,304/17,544/22,664 bytes for float. The largest supported eight-channel float
+instance uses 90,248 bytes at 192 kHz. ABI padding can change these figures.

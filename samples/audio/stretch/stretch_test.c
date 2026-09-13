@@ -330,6 +330,162 @@ static void tempo_changes(void)
    }
 }
 
+static size_t drain_run(audio_stretch_t *s, unsigned channels, int floating,
+      unsigned fragmented, unsigned slot, size_t *gap)
+{
+   size_t made = 0, sample = floating ? sizeof(float) : sizeof(int16_t);
+   char *output = floating ? (char*)output_f[slot] : (char*)output_i[slot];
+   unsigned iteration = 0;
+   struct audio_stretch_drain_io io;
+   *gap = (size_t)-1;
+   memset(output, 0x5a, OUT_FRAMES * channels * sample);
+   guarded = 1;
+   for (;;)
+   {
+      size_t capacity = fragmented ? 1 + (iteration * 7u) % 67 : OUT_FRAMES;
+      io.output = NULL; io.output_capacity = 1;
+      CHECK(!audio_stretch_drain(s, &io));
+      CHECK(!io.output_frames && io.gap_offset == (size_t)-1 && !io.complete);
+      io.output = output; io.output_capacity = (size_t)-1;
+      CHECK(!audio_stretch_drain(s, &io));
+      io.output_capacity = 0;
+      CHECK(audio_stretch_drain(s, &io));
+      CHECK(!io.output_frames && io.gap_offset == (size_t)-1);
+      io.output = output + made * channels * sample;
+      io.output_capacity = capacity;
+      CHECK(audio_stretch_drain(s, &io));
+      CHECK(io.output_frames <= capacity);
+      if (io.gap_offset != (size_t)-1)
+      {
+         CHECK(*gap == (size_t)-1 && io.gap_offset <= io.output_frames);
+         *gap = made + io.gap_offset;
+      }
+      made += io.output_frames;
+      if (io.complete) break;
+      CHECK(io.output_frames != 0);
+      if (++iteration > 100000) { CHECK(0); break; }
+   }
+   io.output_capacity = 0; io.output = NULL;
+   CHECK(audio_stretch_drain(s, &io) && io.complete && !io.output_frames);
+   io.output = output + made * channels * sample; io.output_capacity = 1;
+   CHECK(audio_stretch_drain(s, &io) && io.complete && !io.output_frames);
+   CHECK(io.gap_offset == (size_t)-1);
+   {
+      struct audio_stretch_io probe;
+      size_t n;
+      memset(&probe, 0, sizeof(probe));
+      CHECK(!audio_stretch_process(s, &probe, 1));
+      CHECK(!probe.input_used && !probe.output_frames);
+      for (n = made * channels * sample; n < OUT_FRAMES * channels * sample; n++)
+         CHECK((unsigned char)output[n] == 0x5a);
+   }
+   guarded = 0;
+   return made;
+}
+
+static size_t prepare_drain(audio_stretch_t *s, unsigned channels, int floating,
+      unsigned scenario, size_t *prefix)
+{
+   static float scratch_f[6 * 512 * 8];
+   static int16_t scratch_i[6 * 512 * 8];
+   unsigned hop = audio_stretch_hop(s);
+   size_t frame = channels * (floating ? sizeof(float) : sizeof(int16_t));
+   size_t used;
+   double tempo = scenario == 4 ? 4 : scenario == 5 ? 32 : scenario == 6 ? 1.37 : 2;
+   const char *input = floating ? (const char*)input_f : (const char*)input_i;
+   struct audio_stretch_io io;
+   struct audio_stretch_drain_io query;
+   memset(&query, 0, sizeof(query));
+   guarded = 1;
+   CHECK(audio_stretch_drain(s, &query) && query.complete);
+   io.input = input; io.input_frames = scenario == 0 ? hop - 1 : 2 * hop;
+   io.output = floating ? (void*)scratch_f : (void*)scratch_i;
+   io.output_capacity = scenario == 1 ? 1 : scenario == 7 ? hop / 2 : hop;
+   if (scenario == 6) { io.input_frames = FRAMES; io.output_capacity = 6 * hop; }
+   if (scenario == 8) io.input_frames = 0;
+   CHECK(audio_stretch_process(s, &io, tempo));
+   used = io.input_used; *prefix = io.output_frames;
+   if (scenario == 3 || scenario == 4 || scenario == 5 || scenario == 7)
+   {
+      io.input = input + used * frame;
+      io.input_frames = scenario == 4 ? 2 * hop - hop / 2 + hop / 4 : hop / 4;
+      io.output_capacity = hop;
+      if (scenario == 7) { io.input_frames = 0; io.output_capacity = hop / 4; }
+      CHECK(audio_stretch_process(s, &io, tempo));
+      if (scenario != 7) CHECK(!io.output_frames);
+      used += io.input_used; *prefix += io.output_frames;
+   }
+   guarded = 0;
+   return used;
+}
+
+static void drain_cases(void)
+{
+   const unsigned rates[] = {8000, 48000, 192000};
+   const unsigned widths[] = {1, 6, 8};
+   unsigned r, w, floating, scenario, f, c;
+   for (r = 0; r < 3; r++)
+      for (w = 0; w < 3; w++)
+         for (floating = 0; floating < 2; floating++)
+         {
+            unsigned channels = widths[w];
+            size_t frame = channels * (floating ? sizeof(float) : sizeof(int16_t));
+            const char *input = floating ? (const char*)input_f : (const char*)input_i;
+            const char *a = floating ? (const char*)output_f[0] : (const char*)output_i[0];
+            const char *b = floating ? (const char*)output_f[1] : (const char*)output_i[1];
+            for (f = 0; f < FRAMES; f++)
+               for (c = 0; c < channels; c++)
+               {
+                  input_i[f * channels + c] = (int16_t)(f * 3 + c);
+                  input_f[f * channels + c] = (float)(f * 16 + c);
+               }
+            for (scenario = 0; scenario < 9; scenario++)
+            {
+               audio_stretch_t *s = audio_stretch_new(rates[r], channels, floating, 1);
+               unsigned hop = audio_stretch_hop(s);
+               size_t used, prefix, n, m, gap_a, gap_b, start;
+               struct audio_stretch_io io;
+               used = prepare_drain(s, channels, floating, scenario, &prefix);
+               n = drain_run(s, channels, floating, 0, 0, &gap_a);
+               audio_stretch_reset(s);
+               CHECK(prepare_drain(s, channels, floating, scenario, &start) == used);
+               CHECK(start == prefix);
+               m = drain_run(s, channels, floating, 1, 1, &gap_b);
+               CHECK(n == m && gap_a == gap_b);
+               CHECK(memcmp(a, b, n * frame) == 0);
+               if (scenario == 6)
+               {
+                  start = floating ? (size_t)output_f[1][0] / 16 : (size_t)output_i[1][0] / 3;
+                  CHECK(n == used - start && gap_b == (size_t)-1);
+                  CHECK(memcmp(b, input + start * frame, n * frame) == 0);
+               }
+               else if (scenario == 4 || scenario == 5)
+               {
+                  CHECK(gap_b == hop);
+                  CHECK(memcmp(b, input + hop * frame, hop * frame) == 0);
+                  if (scenario == 4)
+                  {
+                     start = 4 * hop - hop / 2;
+                     CHECK(n == hop + used - start);
+                     CHECK(memcmp(b + hop * frame, input + start * frame, (used - start) * frame) == 0);
+                  }
+                  else CHECK(n == hop);
+               }
+               else
+               {
+                  CHECK(n == used - prefix && gap_b == (size_t)-1);
+                  CHECK(memcmp(b, input + prefix * frame, n * frame) == 0);
+               }
+               guarded = 1; audio_stretch_reset(s); guarded = 0;
+               io.input = input; io.input_frames = 2 * hop;
+               io.output = (void*)a; io.output_capacity = hop;
+               CHECK(audio_stretch_process(s, &io, 1));
+               CHECK(io.output_frames == hop && memcmp(a, input, hop * frame) == 0);
+               audio_stretch_free(s);
+            }
+         }
+}
+
 int main(void)
 {
    contracts();
@@ -338,6 +494,7 @@ int main(void)
    edge_rates();
    excluded_channel();
    tempo_changes();
+   drain_cases();
    CHECK(heap_calls == 0);
    printf("stretch: %u failures, %u processing/reset heap calls\n", failures, heap_calls);
    return failures != 0;

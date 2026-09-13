@@ -21,9 +21,9 @@
 struct audio_stretch
 {
    unsigned channels, hop, radius, capacity, head, count, next;
-   unsigned pending, read;
+   unsigned pending, read, tail_end, tail_read;
    uint32_t fraction, search_channels;
-   bool is_float, started;
+   bool is_float, started, draining, source_gap, gap_reported;
    size_t bytes, frame_bytes;
    void *ring, *overlap, *output, *reference, *search, *window;
    wsola_corr_func_t correlation;
@@ -225,7 +225,8 @@ void audio_stretch_reset(audio_stretch_t *s)
    if (!s) return;
    s->head = s->count = s->next = s->pending = s->read = 0;
    s->fraction = 0;
-   s->started = false;
+   s->tail_end = s->tail_read = 0;
+   s->started = s->draining = s->source_gap = s->gap_reported = false;
 }
 
 bool audio_stretch_process(audio_stretch_t *s, struct audio_stretch_io *io,
@@ -235,7 +236,7 @@ bool audio_stretch_process(audio_stretch_t *s, struct audio_stretch_io *io,
    if (!io) return false;
    io->input_used = io->output_frames = 0;
    memcpy(&bits, &tempo, sizeof(bits));
-   if (!s || bits >= UINT64_C(0x7ff0000000000000) || tempo < 0.25 || tempo > 32.0
+   if (!s || s->draining || bits >= UINT64_C(0x7ff0000000000000) || tempo < 0.25 || tempo > 32.0
          || (!io->input && io->input_frames) || (!io->output && io->output_capacity)
          || io->input_frames > (size_t)-1 / s->frame_bytes
          || io->output_capacity > (size_t)-1 / s->frame_bytes) return false;
@@ -258,10 +259,13 @@ bool audio_stretch_process(audio_stretch_t *s, struct audio_stretch_io *io,
          unsigned drop = s->next - s->radius;
          size_t skip;
          if (drop > s->count) drop = s->count;
+         if (drop > s->tail_end) s->source_gap = true;
+         s->tail_end = drop < s->tail_end ? s->tail_end - drop : 0;
          s->head = astretch_index(s, drop);
          s->count -= drop; s->next -= drop;
          skip = s->next - s->radius;
          if (skip > io->input_frames - io->input_used) skip = io->input_frames - io->input_used;
+         if (skip) s->source_gap = true;
          s->next -= (unsigned)skip; io->input_used += skip;
          if (s->next > s->radius) break;
       }
@@ -286,6 +290,8 @@ bool audio_stretch_process(audio_stretch_t *s, struct audio_stretch_io *io,
          astretch_copy(s, s->overlap, s->hop, s->hop);
          s->started = true;
       }
+      s->tail_end = start + 2 * s->hop;
+      s->source_gap = false;
       if (remaining < s->hop) { s->pending = s->hop; s->read = 0; }
       else io->output_frames += s->hop;
       {
@@ -294,5 +300,68 @@ bool audio_stretch_process(audio_stretch_t *s, struct audio_stretch_io *io,
          s->fraction = (uint32_t)advance;
       }
    }
+   return true;
+}
+
+bool audio_stretch_drain(audio_stretch_t *s, struct audio_stretch_drain_io *io)
+{
+   size_t n, remaining;
+   char *dst;
+   if (!io) return false;
+   io->output_frames = 0;
+   io->gap_offset = (size_t)-1;
+   io->complete = false;
+   if (!s || (!io->output && io->output_capacity)
+         || io->output_capacity > (size_t)-1 / s->frame_bytes) return false;
+   if (!io->output_capacity)
+   {
+      io->complete = !s->pending && (!s->started || s->tail_read == s->hop)
+         && s->count == s->tail_end;
+      return true;
+   }
+   if (!s->draining)
+   {
+      s->draining = true;
+      s->head = astretch_index(s, s->tail_end);
+      s->count -= s->tail_end;
+      s->tail_end = 0;
+   }
+   dst = (char*)io->output;
+   remaining = io->output_capacity;
+   n = s->pending < remaining ? s->pending : remaining;
+   if (n)
+   {
+      memcpy(dst, (const char*)s->output + s->read * s->frame_bytes, n * s->frame_bytes);
+      s->pending -= (unsigned)n; s->read += (unsigned)n;
+      io->output_frames += n; remaining -= n; dst += n * s->frame_bytes;
+   }
+   if (s->started && remaining)
+   {
+      n = s->hop - s->tail_read;
+      if (n > remaining) n = remaining;
+      if (n)
+      {
+         memcpy(dst, (const char*)s->overlap + s->tail_read * s->frame_bytes, n * s->frame_bytes);
+         s->tail_read += (unsigned)n;
+         io->output_frames += n; remaining -= n; dst += n * s->frame_bytes;
+      }
+   }
+   if (!s->pending && (!s->started || s->tail_read == s->hop))
+   {
+      if (s->source_gap && !s->gap_reported)
+      {
+         io->gap_offset = io->output_frames;
+         s->gap_reported = true;
+      }
+      n = s->count < remaining ? s->count : remaining;
+      if (n)
+      {
+         astretch_copy(s, dst, 0, (unsigned)n);
+         s->head = astretch_index(s, (unsigned)n);
+         s->count -= (unsigned)n;
+         io->output_frames += n;
+      }
+   }
+   io->complete = !s->pending && (!s->started || s->tail_read == s->hop) && !s->count;
    return true;
 }

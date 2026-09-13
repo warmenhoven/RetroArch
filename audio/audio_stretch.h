@@ -35,6 +35,17 @@ struct audio_stretch_io
    size_t output_frames;
 };
 
+struct audio_stretch_drain_io
+{
+   void *output;
+   size_t output_capacity;
+   size_t output_frames;
+   /* (size_t)-1 unless a source gap boundary occurs in this call.
+    * May equal output_frames: the gap then precedes future output/input. */
+   size_t gap_offset;
+   bool complete;
+};
+
 /* Single-owner engine, interleaved native float or int16 throughout.
  * Rate: 8000..192000 Hz; channels: 1..8. search_channels is a nonzero
  * mask of channel indices, with LFE excluded by the caller. */
@@ -50,11 +61,21 @@ unsigned audio_stretch_hop(const audio_stretch_t *state);
  * must not overlap. Counts describe actual consumption/production; retry
  * unconsumed input. Zero output capacity consumes nothing. No allocation,
  * device I/O or locking. Invalid requests return false without changing state.
- * A partial hop may be drained with zero input. There is no end-of-stream
- * padding: reset discards lookahead and pending output at a discontinuity.
+ * A partial hop may be processed with zero input. After a positive-capacity
+ * drain call, processing requires reset. Reset discards retained data.
  * Inactive transport must bypass this engine entirely. */
 bool audio_stretch_process(audio_stretch_t *state, struct audio_stretch_io *io,
       double tempo);
+
+/* Exit/EOF: drain pending synthesis, then the last overlap, then remaining
+ * source lookahead, without padding or new input. No allocations/conversions.
+ * A positive-capacity call latches drain mode until reset. Zero capacity is
+ * non-mutating; complete reports whether any tail remains. Invalid arguments
+ * return false without changing state. A gap is reported once, including at
+ * the end of the final buffer if previously skipped source lies before future
+ * caller input. The owner must handle that discontinuity (e.g. crossfade);
+ * this function preserves available samples and does not invent missing ones. */
+bool audio_stretch_drain(audio_stretch_t *state, struct audio_stretch_drain_io *io);
 
 RETRO_END_DECLS
 #endif
