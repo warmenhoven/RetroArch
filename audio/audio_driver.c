@@ -4905,6 +4905,49 @@ static bool audio_driver_multi_discrete(audio_driver_state_t *audio_st, unsigned
  * built into it - a slot per speaker bit, FL and FR first, the rest
  * zero - and published, with its layout beside it for the consumer.
  * Returns true when the batch was taken; false to fold it instead. */
+/* Common layouts occupy a canonical prefix. Write each destination sample
+ * once: copying the source prefix and clearing only absent positions. */
+static INLINE bool audio_driver_pipe_widen_prefix(void *output, const void *input,
+      size_t frames, unsigned channels, unsigned layout, bool floating)
+{
+   size_t f;
+   uint8_t *dst = (uint8_t*)output;
+   const uint8_t *src = (const uint8_t*)input;
+   if (!((channels == 6 && layout == AUDIO_LAYOUT_5POINT1)
+            || (channels == 8 && layout == AUDIO_LAYOUT_7POINT1))) return false;
+   if (floating)
+   {
+      if (channels == 6)
+         for (f = 0; f < frames; f++)
+         {
+            memcpy(dst + f * AUDIO_PIPE_CANON_CHANNELS * sizeof(float), src + f * 6 * sizeof(float), 6 * sizeof(float));
+            memset(dst + f * AUDIO_PIPE_CANON_CHANNELS * sizeof(float) + 6 * sizeof(float), 0, 5 * sizeof(float));
+         }
+      else
+         for (f = 0; f < frames; f++)
+         {
+            memcpy(dst + f * AUDIO_PIPE_CANON_CHANNELS * sizeof(float), src + f * 8 * sizeof(float), 8 * sizeof(float));
+            memset(dst + f * AUDIO_PIPE_CANON_CHANNELS * sizeof(float) + 8 * sizeof(float), 0, 3 * sizeof(float));
+         }
+   }
+   else
+   {
+      if (channels == 6)
+         for (f = 0; f < frames; f++)
+         {
+            memcpy(dst + f * AUDIO_PIPE_CANON_CHANNELS * sizeof(int16_t), src + f * 6 * sizeof(int16_t), 6 * sizeof(int16_t));
+            memset(dst + f * AUDIO_PIPE_CANON_CHANNELS * sizeof(int16_t) + 6 * sizeof(int16_t), 0, 5 * sizeof(int16_t));
+         }
+      else
+         for (f = 0; f < frames; f++)
+         {
+            memcpy(dst + f * AUDIO_PIPE_CANON_CHANNELS * sizeof(int16_t), src + f * 8 * sizeof(int16_t), 8 * sizeof(int16_t));
+            memset(dst + f * AUDIO_PIPE_CANON_CHANNELS * sizeof(int16_t) + 8 * sizeof(int16_t), 0, 3 * sizeof(int16_t));
+         }
+   }
+   return true;
+}
+
 static bool audio_driver_multi_pipe(audio_driver_state_t *audio_st,
       const void *data, size_t frames, unsigned channels, unsigned layout, bool is_float)
 {
@@ -4951,11 +4994,16 @@ static bool audio_driver_multi_pipe(audio_driver_state_t *audio_st,
    {
       size_t take = frames - done;
       if (take > capacity) take = capacity;
-      memset(audio_st->pipe_canon, 0, take * pc * sample);
-      for (f = 0; f < take; f++)
-         for (c = 0; c < channels && c < n; c++)
-            memcpy(audio_st->pipe_canon + (f * pc + slot[c]) * sample,
-                  (const uint8_t*)data + ((done + f) * channels + c) * sample, sample);
+      if (!audio_driver_pipe_widen_prefix(audio_st->pipe_canon,
+               (const uint8_t*)data + done * channels * sample,
+               take, channels, layout, is_float))
+      {
+         memset(audio_st->pipe_canon, 0, take * pc * sample);
+         for (f = 0; f < take; f++)
+            for (c = 0; c < channels && c < n; c++)
+               memcpy(audio_st->pipe_canon + (f * pc + slot[c]) * sample,
+                     (const uint8_t*)data + ((done + f) * channels + c) * sample, sample);
+      }
       audio_driver_submit_width(audio_st, config_get_ptr()->floats.slowmotion_ratio,
             audio_st->pipe_canon, take * pc, is_float,
             (runloop_flags & RUNLOOP_FLAG_SLOWMOTION) ? true : false,

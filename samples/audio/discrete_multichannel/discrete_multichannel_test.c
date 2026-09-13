@@ -1232,6 +1232,51 @@ static void pending_lifecycle_case(bool floating)
    config_get_ptr()->bools.audio_sync = sync;
 }
 
+static void canonical_prefix_case(void)
+{
+   static uint8_t input[1024 * 8 * sizeof(float) + 2];
+   static uint8_t saved[sizeof(input)];
+   static uint8_t output[1024 * AUDIO_PIPE_CANON_CHANNELS * sizeof(float) + 2];
+   static const size_t counts[] = { 0, 1, 32, 512, 1024 };
+   static const uint32_t bits[] = { 0, 0x80000000u, 0x7fc01234u, 0x7fa12345u,
+      0x7f800000u, 0xff800000u, 1, 0xffffffffu };
+   unsigned floating, channels, count;
+   size_t i, f, sample, frames, bytes;
+   for (floating = 0; floating < 2; floating++)
+      for (channels = 6; channels <= 8; channels += 2)
+         for (count = 0; count < sizeof(counts) / sizeof(counts[0]); count++)
+         {
+            sample = floating ? sizeof(float) : sizeof(int16_t);
+            frames = counts[count];
+            bytes = frames * AUDIO_PIPE_CANON_CHANNELS * sample;
+            for (i = 0; i < sizeof(input); i++) input[i] = (uint8_t)(i * 97 + count * 17);
+            if (floating)
+               for (i = 0; i < frames * channels; i++)
+                  memcpy(input + 1 + i * sample, &bits[i % 8], sample);
+            memcpy(saved, input, sizeof(input));
+            memset(output, 0xa5, sizeof(output));
+            CHECK(audio_driver_pipe_widen_prefix(output + 1, input + 1, frames, channels,
+                     channels == 6 ? AUDIO_LAYOUT_5POINT1 : AUDIO_LAYOUT_7POINT1, floating),
+                  "canonical prefix refused native layout");
+            for (f = 0; f < frames; f++)
+            {
+               size_t offset = 1 + f * AUDIO_PIPE_CANON_CHANNELS * sample;
+               CHECK(!memcmp(output + offset, input + 1 + f * channels * sample, channels * sample),
+                     "canonical prefix changed source bits");
+               for (i = channels * sample; i < AUDIO_PIPE_CANON_CHANNELS * sample; i++)
+                  CHECK(output[offset + i] == 0, "canonical absent position is not silent");
+            }
+            CHECK(output[0] == 0xa5, "canonical prefix underflow");
+            for (i = bytes + 1; i < sizeof(output); i++)
+               CHECK(output[i] == 0xa5, "canonical prefix overflow");
+            CHECK(!memcmp(saved, input, sizeof(input)), "canonical prefix modified source");
+         }
+   memset(output, 0xa5, sizeof(output));
+   CHECK(!audio_driver_pipe_widen_prefix(output, input, 32, 6, AUDIO_LAYOUT_5POINT1_SURROUND, true),
+         "non-prefix layout skipped general remapping");
+   for (i = 0; i < sizeof(output); i++) CHECK(output[i] == 0xa5, "rejected prefix changed output");
+}
+
 int main(void)
 {
    /* One case at a time, for when a single one is being worked on:
@@ -1243,6 +1288,7 @@ int main(void)
    RUN("suspended", suspended_multichannel_case(false, true));
    RUN("suspended", suspended_multichannel_case(true, false));
    RUN("suspended", suspended_multichannel_case(false, false));
+   RUN("prefix", canonical_prefix_case());
    RUN("pending", pending_lifecycle_case(false));
    RUN("pending", pending_lifecycle_case(true));
    RUN("pending", pending_output_case(false, false));
