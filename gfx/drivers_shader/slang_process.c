@@ -1399,7 +1399,7 @@ bool slang_preprocess_parse_parameters_cached(const char *shader_path,
 
    if (shader_line_buf_init(&lines))
    {
-      if (glslang_read_shader_file_cached(shader_path, &lines, true, false,
+      if (glslang_read_shader_pragmas_cached(shader_path, &lines,
                include_cache))
       {
          glslang_meta meta;
