@@ -121,5 +121,20 @@ bool audio_stretch_stream_process(audio_stretch_stream_t *state,
 bool audio_stretch_stream_flush(audio_stretch_stream_t *state,
       struct audio_stretch_drain_io *io);
 
+/* Optional caller-owned output block for partial downstream consumption.
+ * Bind before use (or after reset); storage must outlive the binding and must
+ * not overlap input. Bound streams use push/finish/peek/consume exclusively.
+ * Peeked native frames remain stable until consumed or explicitly reset.
+ * Reset discards pending output but preserves the binding. Bind NULL/0 to
+ * return a reset stream to the direct process/flush API. No copies added. */
+bool audio_stretch_stream_bind(audio_stretch_stream_t *state,
+      void *output, size_t capacity);
+bool audio_stretch_stream_push(audio_stretch_stream_t *state,
+      const void *input, size_t frames, size_t *used, double tempo, bool active);
+const void *audio_stretch_stream_peek(const audio_stretch_stream_t *state,
+      size_t *frames);
+bool audio_stretch_stream_consume(audio_stretch_stream_t *state, size_t frames);
+bool audio_stretch_stream_finish(audio_stretch_stream_t *state, bool *complete);
+
 RETRO_END_DECLS
 #endif

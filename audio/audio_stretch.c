@@ -565,6 +565,8 @@ struct audio_stretch_stream
    audio_stretch_t *engine;
    audio_stretch_transition_t *transition;
    size_t frame_bytes, count, read, gap;
+   void *bound_output;
+   size_t bound_capacity, bound_count, bound_read;
    unsigned hop;
    enum astretch_stream_phase phase;
    bool eof;
@@ -604,6 +606,7 @@ void audio_stretch_stream_reset(audio_stretch_stream_t *s)
    audio_stretch_transition_reset(s->transition);
    s->count = s->read = 0; s->gap = (size_t)-1;
    s->phase = ASTRETCH_STREAM_RAW; s->eof = false;
+   s->bound_count = s->bound_read = 0;
 }
 
 static void astretch_stream_pump(audio_stretch_stream_t *s,
@@ -688,7 +691,7 @@ static void astretch_stream_pump(audio_stretch_stream_t *s,
    }
 }
 
-bool audio_stretch_stream_process(audio_stretch_stream_t *s,
+static bool astretch_stream_process(audio_stretch_stream_t *s,
       struct audio_stretch_io *io, double tempo, bool active)
 {
    uint64_t bits;
@@ -706,7 +709,7 @@ bool audio_stretch_stream_process(audio_stretch_stream_t *s,
    return true;
 }
 
-bool audio_stretch_stream_flush(audio_stretch_stream_t *s,
+static bool astretch_stream_flush(audio_stretch_stream_t *s,
       struct audio_stretch_drain_io *io)
 {
    struct audio_stretch_io part;
@@ -723,5 +726,89 @@ bool audio_stretch_stream_flush(audio_stretch_stream_t *s,
       io->output_frames = part.output_frames;
    }
    io->complete = s->phase == ASTRETCH_STREAM_DONE;
+   return true;
+}
+
+bool audio_stretch_stream_process(audio_stretch_stream_t *s,
+      struct audio_stretch_io *io, double tempo, bool active)
+{
+   if (s && s->bound_output)
+   {
+      if (io) io->input_used = io->output_frames = 0;
+      return false;
+   }
+   return astretch_stream_process(s, io, tempo, active);
+}
+
+bool audio_stretch_stream_flush(audio_stretch_stream_t *s,
+      struct audio_stretch_drain_io *io)
+{
+   if (s && s->bound_output)
+   {
+      if (io)
+      {
+         io->output_frames = 0; io->gap_offset = (size_t)-1; io->complete = false;
+      }
+      return false;
+   }
+   return astretch_stream_flush(s, io);
+}
+
+bool audio_stretch_stream_bind(audio_stretch_stream_t *s,
+      void *output, size_t capacity)
+{
+   if (!s || s->phase != ASTRETCH_STREAM_RAW || s->eof || s->bound_count
+         || (!!output != !!capacity)
+         || capacity > (size_t)-1 / s->frame_bytes) return false;
+   s->bound_output = output; s->bound_capacity = capacity;
+   s->bound_read = 0;
+   return true;
+}
+
+const void *audio_stretch_stream_peek(const audio_stretch_stream_t *s,
+      size_t *frames)
+{
+   if (!frames) return NULL;
+   *frames = s ? s->bound_count - s->bound_read : 0;
+   return *frames ? (const char*)s->bound_output + s->bound_read * s->frame_bytes : NULL;
+}
+
+bool audio_stretch_stream_consume(audio_stretch_stream_t *s, size_t frames)
+{
+   if (!s || !s->bound_output || frames > s->bound_count - s->bound_read) return false;
+   s->bound_read += frames;
+   if (s->bound_read == s->bound_count) s->bound_read = s->bound_count = 0;
+   return true;
+}
+
+bool audio_stretch_stream_push(audio_stretch_stream_t *s,
+      const void *input, size_t frames, size_t *used, double tempo, bool active)
+{
+   struct audio_stretch_io io;
+   if (!used) return false;
+   *used = 0;
+   if (!s || !s->bound_output) return false;
+   io.input = input; io.input_frames = frames; io.output = s->bound_output;
+   io.output_capacity = s->bound_count ? 0 : s->bound_capacity;
+   if (!astretch_stream_process(s, &io, tempo, active)) return false;
+   /* A pending output block must not cancel a requested exit. */
+   if (!active && s->phase == ASTRETCH_STREAM_ACTIVE) s->phase = ASTRETCH_STREAM_EXIT;
+   *used = io.input_used;
+   if (!s->bound_count) s->bound_count = io.output_frames;
+   return true;
+}
+
+bool audio_stretch_stream_finish(audio_stretch_stream_t *s, bool *complete)
+{
+   struct audio_stretch_drain_io io;
+   if (!complete) return false;
+   *complete = false;
+   if (!s || !s->bound_output) return false;
+   s->eof = true;
+   if (s->bound_count) return true;
+   io.output = s->bound_output; io.output_capacity = s->bound_capacity;
+   astretch_stream_flush(s, &io);
+   s->bound_count = io.output_frames;
+   *complete = io.complete && !s->bound_count;
    return true;
 }

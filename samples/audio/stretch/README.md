@@ -144,3 +144,31 @@ failures at all three construction stages, reset during processing, output
 canaries and bulk/fragmented equality. Uninterrupted active output is compared
 against direct engine processing plus drain at slow, unity and fractional tempos.
 Full runtime ownership, SRC capacity integration and hardware acceptance remain.
+
+## Caller-owned pending output
+
+Bind a native output buffer before using a stream, then use push, peek, consume
+and finish instead of direct process/flush. Push writes directly into that
+buffer. While any frames remain unconsumed, push validates the request but
+consumes no input and preserves the pending bytes; an exit request still latches.
+Peek returns the remaining span in place, and consume acknowledges only accepted
+frames. A zero acknowledgement preserves everything; an oversized one fails.
+The buffer may not overlap input and must remain alive until reset/unbind/free.
+
+Finish latches EOF immediately, but reports complete only after downstream
+acknowledges all produced frames. Reset deliberately discards pending samples
+and preserves the buffer binding. Rebind/unbind is allowed only in empty raw
+state. Direct process/flush reject a bound stream to prevent mixed ownership.
+
+The API adds a pointer and three size_t fields to adapter metadata (32 bytes on
+x86-64), no sample storage, allocations, copies or format conversions. Existing
+adapter staging/holdback costs still apply. The frontend can supply an existing
+sized arena slice. A downstream SRC must acknowledge source frames actually
+consumed; its produced device samples need their own short-write lifetime.
+This API does not itself change driver write behavior or publish stream epochs.
+
+Tests compare 144 combinations of rate, width, native format, tempo and output
+capacity against direct adapter output while accepting only 1..11 frames at a
+time, including zero acknowledgements and repeated pushes against pending data.
+EOF acceptance, reset, output canaries, invalid acknowledgements and forbidden
+API mixing are covered. Frontend/device integration remains outstanding.
