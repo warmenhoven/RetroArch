@@ -599,11 +599,12 @@ void retro_eventcount_free(retro_eventcount_t *ec)
 
 void retro_eventcount_notify(retro_eventcount_t *ec)
 {
-   /* Publish the state change first.  The seq_cst fence is what orders
-    * this store against the waiters load below; an acq_rel
-    * read-modify-write does not, and without it a notify could read
-    * zero waiters while a consumer that has not yet seen the new epoch
-    * is on its way into a park. */
+   /* Publish the state change, then read the waiter count, both
+    * sequentially consistent.  The two here and the mirrored pair in
+    * prepare_wait share one total order, which is what stops a notify
+    * reading zero waiters while a consumer that has not yet seen the
+    * new epoch is on its way into a park.  A separate seq_cst fence
+    * would do the same job and costs a second locked operation. */
 #if defined(RETRO_EC_LOCKED_BOOKKEEPING)
    slock_lock(ec->lock);
    retro_atomic_fetch_add_int(&ec->epoch, 1);
@@ -612,8 +613,7 @@ void retro_eventcount_notify(retro_eventcount_t *ec)
    slock_unlock(ec->lock);
    return;
 #else
-   retro_atomic_fetch_add_int(&ec->epoch, 1);
-   retro_atomic_thread_fence_seq_cst();
+   retro_atomic_fetch_add_seq_cst_int(&ec->epoch, 1);
 #endif
 
 #if defined(RETRO_ATOMIC_LOCK_FREE)
@@ -621,7 +621,7 @@ void retro_eventcount_notify(retro_eventcount_t *ec)
     * degrades to a compiler barrier the handshake cannot be relied on,
     * so that build takes the lock on every notify instead -- which is
     * the single-core case, where the lock is uncontended anyway. */
-   if (retro_atomic_load_acquire_int(&ec->waiters) == 0)
+   if (retro_atomic_load_seq_cst_int(&ec->waiters) == 0)
       return;
 #endif
 
@@ -663,10 +663,9 @@ int retro_eventcount_prepare_wait(retro_eventcount_t *ec)
       return key;
    }
 #else
-   retro_atomic_fetch_add_int(&ec->waiters, 1);
-   retro_atomic_thread_fence_seq_cst();
+   retro_atomic_fetch_add_seq_cst_int(&ec->waiters, 1);
 
-   return retro_atomic_load_acquire_int(&ec->epoch);
+   return retro_atomic_load_seq_cst_int(&ec->epoch);
 #endif
 }
 
