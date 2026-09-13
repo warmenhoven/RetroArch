@@ -83,3 +83,34 @@ before calling it. There is no added engine storage or normal-processing work.
 Tests cover all 1..8 channels, both lanes, endpoints, full-range integer inputs,
 fragmentation, exact aliasing, invalid requests and allocation guards. Playback
 integration and listening/device acceptance remain pending.
+
+## Transition owner
+
+`audio_stretch_transition_new` allocates a single native tail ring and metadata.
+It is optional: inactive playback must bypass it. The owner retains up to the
+chosen tail length before emitting continuous audio. For example, 128 frames
+adds 2.67 ms of holdback at 48 kHz. Large blocks copy their middle directly to
+caller output; only the bounded tail passes through the ring. Small fragmented
+calls can require two ring copies. Process, boundary, flush and reset allocate
+nothing and never convert sample formats.
+
+At a drain gap, submit all pre-gap frames to the transition owner, retrying any
+unconsumed input. Then call `audio_stretch_transition_boundary` exactly once
+before submitting post-gap frames. A gap at the end of a buffer applies before
+future caller input. The retained outgoing tail overlaps incoming frames with
+the shared native crossfade, shortening combined duration by the overlap length.
+No search/alignment is performed at this boundary. If a boundary arrives before
+the current overlap finishes, it is rejected without mutation; runtime policy
+must handle rapid transitions explicitly. Do not silently drop that boundary.
+
+Flush emits an ordinary retained tail and latches EOF until reset. If EOF occurs
+after partial blending, unused outgoing frames are discarded. If no incoming
+frames arrived, the original tail is preserved. Zero-capacity calls do not
+mutate state. Reset discards retained data for an explicit stream discontinuity.
+This owner does not own device writes, stream epochs or the engine itself.
+
+Tests compare bulk and fragmented operation against a two-segment reference,
+including short/empty streams, wrapped rings, partial EOF, reset and allocation
+failure. Actual high-tempo engine drains are split at their gap markers and
+rejoined with future source input in both native lanes. Runtime frontend wiring,
+short-write ownership, entry scheduling and listening acceptance remain pending.

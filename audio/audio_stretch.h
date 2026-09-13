@@ -86,5 +86,25 @@ bool audio_stretch_crossfade(void *output, const void *outgoing,
       const void *incoming, size_t frames, unsigned channels, bool is_float,
       unsigned offset, unsigned total);
 
+/* Optional single-owner transition holdback; bypass when inactive.
+ * One allocation holds at most tail_frames native frames (1..65536).
+ * Process input/output must not overlap. Zero output capacity consumes nothing.
+ * Boundary overlaps the retained tail with future input; it rejects a second
+ * boundary until the first overlap completes. Reset discards all history.
+ * Flush latches EOF until reset. An incomplete overlap discards its unused
+ * outgoing suffix at EOF once blending has started; an unstarted boundary
+ * preserves the outgoing tail. */
+typedef struct audio_stretch_transition audio_stretch_transition_t;
+audio_stretch_transition_t *audio_stretch_transition_new(unsigned channels,
+      bool is_float, unsigned tail_frames);
+void audio_stretch_transition_free(audio_stretch_transition_t *state);
+void audio_stretch_transition_reset(audio_stretch_transition_t *state);
+bool audio_stretch_transition_boundary(audio_stretch_transition_t *state);
+bool audio_stretch_transition_process(audio_stretch_transition_t *state,
+      struct audio_stretch_io *io);
+/* gap_offset is always (size_t)-1; zero capacity is a non-mutating query. */
+bool audio_stretch_transition_flush(audio_stretch_transition_t *state,
+      struct audio_stretch_drain_io *io);
+
 RETRO_END_DECLS
 #endif

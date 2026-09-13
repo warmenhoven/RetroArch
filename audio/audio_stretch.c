@@ -415,3 +415,141 @@ bool audio_stretch_crossfade(void *output, const void *outgoing,
    }
    return true;
 }
+
+struct audio_stretch_transition
+{
+   size_t frame_bytes;
+   unsigned channels, capacity, head, count, fade_total, fade_offset;
+   bool is_float, flushing;
+};
+
+audio_stretch_transition_t *audio_stretch_transition_new(unsigned channels,
+      bool is_float, unsigned tail_frames)
+{
+   audio_stretch_transition_t *s;
+   size_t frame;
+   if (!channels || channels > 8 || !tail_frames || tail_frames > 65536)
+      return NULL;
+   frame = channels * (is_float ? sizeof(float) : sizeof(int16_t));
+   s = (audio_stretch_transition_t*)calloc(1, sizeof(*s) + tail_frames * frame);
+   if (!s) return NULL;
+   s->channels = channels; s->capacity = tail_frames;
+   s->frame_bytes = frame; s->is_float = is_float;
+   return s;
+}
+
+void audio_stretch_transition_free(audio_stretch_transition_t *s) { free(s); }
+
+void audio_stretch_transition_reset(audio_stretch_transition_t *s)
+{
+   if (!s) return;
+   s->head = s->count = s->fade_total = s->fade_offset = 0;
+   s->flushing = false;
+}
+
+bool audio_stretch_transition_boundary(audio_stretch_transition_t *s)
+{
+   if (!s || s->flushing || s->fade_total) return false;
+   s->fade_total = s->count;
+   s->fade_offset = 0;
+   return true;
+}
+
+/* Pop old frames, or append new frames, using at most two native copies. */
+static void astretch_transition_copy(audio_stretch_transition_t *s,
+      void *buffer, unsigned frames, bool append)
+{
+   unsigned index = append ? (s->head + s->count) % s->capacity : s->head;
+   unsigned first = s->capacity - index;
+   char *ring = (char*)(s + 1);
+   if (first > frames) first = frames;
+   if (append)
+   {
+      memcpy(ring + index * s->frame_bytes, buffer, first * s->frame_bytes);
+      if (frames > first)
+         memcpy(ring, (char*)buffer + first * s->frame_bytes,
+               (frames - first) * s->frame_bytes);
+      s->count += frames;
+   }
+   else
+   {
+      memcpy(buffer, ring + index * s->frame_bytes, first * s->frame_bytes);
+      if (frames > first)
+         memcpy((char*)buffer + first * s->frame_bytes, ring,
+               (frames - first) * s->frame_bytes);
+      s->count -= frames;
+      s->head = (s->head + frames) % s->capacity;
+   }
+}
+
+bool audio_stretch_transition_process(audio_stretch_transition_t *s,
+      struct audio_stretch_io *io)
+{
+   size_t n, old, direct, available, space;
+   const char *src;
+   char *dst;
+   if (!io) return false;
+   io->input_used = io->output_frames = 0;
+   if (!s || s->flushing || (!io->input && io->input_frames)
+         || (!io->output && io->output_capacity)
+         || io->input_frames > (size_t)-1 / s->frame_bytes
+         || io->output_capacity > (size_t)-1 / s->frame_bytes) return false;
+   if (!io->output_capacity || !io->input_frames) return true;
+   src = (const char*)io->input; dst = (char*)io->output;
+   available = io->input_frames; space = io->output_capacity;
+   while (s->fade_total && available && space)
+   {
+      n = s->capacity - s->head;
+      if (n > s->count) n = s->count;
+      if (n > available) n = available;
+      if (n > space) n = space;
+      audio_stretch_crossfade(dst, (char*)(s + 1) + s->head * s->frame_bytes,
+            src, n, s->channels, s->is_float, s->fade_offset, s->fade_total);
+      s->head = (s->head + (unsigned)n) % s->capacity;
+      s->count -= (unsigned)n; s->fade_offset += (unsigned)n;
+      if (!s->count) s->fade_total = s->fade_offset = 0;
+      src += n * s->frame_bytes; dst += n * s->frame_bytes;
+      available -= n; space -= n;
+      io->input_used += n; io->output_frames += n;
+   }
+   if (!available || !space) return true;
+   n = s->capacity - s->count;
+   n = available > n ? available - n : 0;
+   if (n > space) n = space;
+   old = n < s->count ? n : s->count;
+   if (old) astretch_transition_copy(s, dst, (unsigned)old, false);
+   direct = n - old;
+   if (direct)
+   {
+      memcpy(dst + old * s->frame_bytes, src, direct * s->frame_bytes);
+      src += direct * s->frame_bytes;
+      available -= direct; io->input_used += direct;
+   }
+   io->output_frames += n;
+   n = s->capacity - s->count;
+   if (n > available) n = available;
+   if (n) astretch_transition_copy(s, (void*)src, (unsigned)n, true);
+   io->input_used += n;
+   return true;
+}
+
+bool audio_stretch_transition_flush(audio_stretch_transition_t *s,
+      struct audio_stretch_drain_io *io)
+{
+   size_t n;
+   if (!io) return false;
+   io->output_frames = 0; io->gap_offset = (size_t)-1; io->complete = false;
+   if (!s || (!io->output && io->output_capacity)
+         || io->output_capacity > (size_t)-1 / s->frame_bytes) return false;
+   if (io->output_capacity)
+   {
+      s->flushing = true;
+      if (s->fade_offset) s->count = 0;
+      s->fade_total = s->fade_offset = 0;
+      n = s->count < io->output_capacity ? s->count : io->output_capacity;
+      if (n) astretch_transition_copy(s, io->output, (unsigned)n, false);
+      io->output_frames = n;
+   }
+   io->complete = !s->count || s->fade_offset != 0;
+   return true;
+}

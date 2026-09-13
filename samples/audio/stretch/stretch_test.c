@@ -567,6 +567,179 @@ static void crossfade_cases(void)
    CHECK(audio_stretch_crossfade(NULL, NULL, NULL, 0, 1, false, 65536, 65536));
 }
 
+static size_t transition_run(unsigned channels, unsigned native, unsigned tail,
+      unsigned first, unsigned second, unsigned fragmented, unsigned slot)
+{
+   audio_stretch_transition_t *s = audio_stretch_transition_new(channels, native, tail);
+   char *dst = (char*)(native ? (void*)output_f[slot] : (void*)output_i[slot]);
+   const char *src = (const char*)(native ? (void*)input_f : (void*)input_i);
+   size_t frame = channels * (native ? sizeof(float) : sizeof(int16_t));
+   size_t made = 0, check;
+   unsigned segment;
+   struct audio_stretch_io io;
+   struct audio_stretch_drain_io drain;
+   CHECK(s != NULL);
+   if (!s) return 0;
+   memset(dst, 0x5a, OUT_FRAMES * frame);
+   guarded = 1;
+   for (segment = 0; segment < 2; segment++)
+   {
+      unsigned used = 0, length = segment ? second : first;
+      if (segment) CHECK(audio_stretch_transition_boundary(s));
+      while (used < length)
+      {
+         size_t n = fragmented ? used % 19 + 1 : length - used;
+         if (n > length - used) n = length - used;
+         io.input = src + ((segment ? 4096 : 0) + used) * frame;
+         io.input_frames = n; io.output = dst + made * frame;
+         io.output_capacity = 0;
+         CHECK(audio_stretch_transition_process(s, &io));
+         CHECK(io.input_used == 0 && io.output_frames == 0);
+         io.output_capacity = fragmented ? used % 13 + 1 : FRAMES;
+         CHECK(audio_stretch_transition_process(s, &io));
+         CHECK(io.input_used <= n && io.output_frames <= io.output_capacity);
+         CHECK(io.input_used || io.output_frames);
+         if (!io.input_used && !io.output_frames) break;
+         used += (unsigned)io.input_used; made += io.output_frames;
+      }
+   }
+   do
+   {
+      drain.output = dst + made * frame;
+      drain.output_capacity = fragmented ? 7 : FRAMES;
+      CHECK(audio_stretch_transition_flush(s, &drain));
+      CHECK(drain.output_frames <= drain.output_capacity && drain.gap_offset == (size_t)-1);
+      made += drain.output_frames;
+   } while (!drain.complete);
+   for (check = made * frame; check < OUT_FRAMES * frame; check++)
+      CHECK((unsigned char)dst[check] == 0x5a);
+   io.input = src; io.input_frames = 1; io.output = dst; io.output_capacity = 1;
+   CHECK(!audio_stretch_transition_process(s, &io));
+   CHECK(!audio_stretch_transition_boundary(s));
+   audio_stretch_transition_reset(s);
+   CHECK(audio_stretch_transition_process(s, &io));
+   CHECK(io.input_used == 1 && io.output_frames == 0);
+   guarded = 0;
+   audio_stretch_transition_free(s);
+   return made;
+}
+
+static void transition_cases(void)
+{
+   static float expected_f[FRAMES * 8];
+   static int16_t expected_i[FRAMES * 8];
+   static const unsigned tails[] = {1, 3, 21, 128};
+   unsigned channels, native, t, scenario;
+   audio_stretch_transition_t *s;
+   struct audio_stretch_io io;
+   struct audio_stretch_drain_io drain;
+   for (channels = 1; channels <= 8; channels++)
+   {
+      fill(channels);
+      for (native = 0; native < 2; native++)
+         for (t = 0; t < sizeof(tails) / sizeof(tails[0]); t++)
+            for (scenario = 0; scenario < 7; scenario++)
+            {
+               unsigned tail = tails[t], first = 511, second = 523, held, blend;
+               size_t a, b, expected, frame = channels * (native ? sizeof(float) : sizeof(int16_t));
+               char *ref = (char*)(native ? (void*)expected_f : (void*)expected_i);
+               const char *input = (const char*)(native ? (void*)input_f : (void*)input_i);
+               const char *whole = (const char*)(native ? (void*)output_f[0] : (void*)output_i[0]);
+               const char *parts = (const char*)(native ? (void*)output_f[1] : (void*)output_i[1]);
+               if (scenario == 1) first = tail - 1;
+               if (scenario == 2) first = tail;
+               if (scenario == 3) second = tail - 1;
+               if (scenario == 4) second = 0;
+               if (scenario == 5) first = 0;
+               if (scenario == 6) { first = 0; second = 0; }
+               a = transition_run(channels, native, tail, first, second, 0, 0);
+               b = transition_run(channels, native, tail, first, second, 1, 1);
+               held = first < tail ? first : tail;
+               if (!second) held = 0;
+               blend = second < held ? second : held;
+               expected = first - held;
+               memcpy(ref, input, expected * frame);
+               if (held)
+                  CHECK(audio_stretch_crossfade(ref + expected * frame,
+                           input + expected * frame, input + 4096 * frame,
+                           blend, channels, native, 0, held));
+               expected += blend;
+               if (second > blend)
+               {
+                  memcpy(ref + expected * frame, input + (4096 + blend) * frame,
+                        (second - blend) * frame);
+                  expected += second - blend;
+               }
+               CHECK(a == b && a == expected);
+               CHECK(memcmp(whole, parts, a * frame) == 0);
+               CHECK(memcmp(whole, ref, a * frame) == 0);
+            }
+   }
+   CHECK(!audio_stretch_transition_new(0, false, 1));
+   CHECK(!audio_stretch_transition_new(9, false, 1));
+   CHECK(!audio_stretch_transition_new(2, false, 0));
+   CHECK(!audio_stretch_transition_new(2, false, 65537));
+   fail_init = 1; CHECK(!audio_stretch_transition_new(2, false, 3)); fail_init = 0;
+   s = audio_stretch_transition_new(2, false, 3);
+   io.input = input_i; io.input_frames = 3; io.output = output_i[0]; io.output_capacity = 3;
+   guarded = 1;
+   CHECK(audio_stretch_transition_process(s, &io));
+   CHECK(audio_stretch_transition_boundary(s));
+   CHECK(!audio_stretch_transition_boundary(s));
+   io.input_frames = (size_t)-1;
+   CHECK(!audio_stretch_transition_process(s, &io));
+   CHECK(io.input_used == 0 && io.output_frames == 0);
+   drain.output = NULL; drain.output_capacity = 0;
+   CHECK(audio_stretch_transition_flush(s, &drain) && !drain.complete);
+   io.input_frames = 3;
+   CHECK(audio_stretch_transition_process(s, &io));
+   CHECK(io.input_used == 3 && io.output_frames == 3);
+   CHECK(audio_stretch_transition_boundary(s));
+   audio_stretch_transition_reset(s);
+   guarded = 0;
+   audio_stretch_transition_free(s);
+}
+
+static void transition_drain_chain(void)
+{
+   static float expected_f[FRAMES * 8];
+   static int16_t expected_i[FRAMES * 8];
+   unsigned channels, native, scenario;
+   for (channels = 1; channels <= 8; channels++)
+      for (native = 0; native < 2; native++)
+         for (scenario = 4; scenario <= 5; scenario++)
+         {
+            audio_stretch_t *s = audio_stretch_new(48000, channels, native, 1);
+            size_t used, prefix, n, gap, a, b, expected;
+            size_t frame = channels * (native ? sizeof(float) : sizeof(int16_t));
+            char *input = (char*)(native ? (void*)input_f : (void*)input_i);
+            char *ref = (char*)(native ? (void*)expected_f : (void*)expected_i);
+            const char *drained = (const char*)(native ? (void*)output_f[0] : (void*)output_i[0]);
+            const char *parts = (const char*)(native ? (void*)output_f[1] : (void*)output_i[1]);
+            fill(channels);
+            used = prepare_drain(s, channels, native, scenario, &prefix);
+            n = drain_run(s, channels, native, 1, 0, &gap);
+            CHECK(gap == 128 && gap <= n);
+            /* Future caller input follows retained post-gap lookahead. */
+            memmove(input + (4096 + n - gap) * frame, input + used * frame, 128 * frame);
+            memcpy(input + 4096 * frame, drained + gap * frame, (n - gap) * frame);
+            memcpy(input, drained, gap * frame);
+            expected = n;
+            CHECK(audio_stretch_crossfade(ref, input, input + 4096 * frame,
+                     128, channels, native, 0, 128));
+            memcpy(ref + 128 * frame, input + (4096 + 128) * frame,
+                  (expected - 128) * frame);
+            a = transition_run(channels, native, 128, (unsigned)gap,
+                  (unsigned)(n - gap + 128), 0, 0);
+            b = transition_run(channels, native, 128, (unsigned)gap,
+                  (unsigned)(n - gap + 128), 1, 1);
+            CHECK(a == expected && b == a);
+            CHECK(memcmp(drained, parts, a * frame) == 0);
+            CHECK(memcmp(drained, ref, a * frame) == 0);
+            audio_stretch_free(s);
+         }
+}
+
 int main(void)
 {
    contracts();
@@ -577,6 +750,8 @@ int main(void)
    tempo_changes();
    drain_cases();
    crossfade_cases();
+   transition_cases();
+   transition_drain_chain();
    CHECK(heap_calls == 0);
    printf("stretch: %u failures, %u processing/reset heap calls\n", failures, heap_calls);
    return failures != 0;
