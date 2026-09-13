@@ -82,7 +82,15 @@
  *    sleep, so a long window buys a notifier pointless syscalls.
  *
  * 3. Any number of threads may notify.  Any number may wait; a notify
- *    releases all of them.
+ *    releases all of them.  That holds on every backend, including the
+ *    ones whose atomics are not lock-free, where the bookkeeping is
+ *    kept under a mutex because their read-modify-writes are not
+ *    indivisible.
+ *
+ * 4. The window between prepare_wait and its answer must not span 2^32
+ *    notifications, or the key could match a different epoch than the
+ *    one it named.  Keeping the window short, which rule 2 asks for
+ *    anyway, is several orders of magnitude more than enough.
  *
  * 4. A consumer that spins before parking must gate the spin on
  *    RETRO_ATOMIC_LOCK_FREE, not merely on this header existing.  On a
@@ -210,7 +218,9 @@ void retro_eventcount_commit_wait(retro_eventcount_t *ec, int key);
  * retro_eventcount_commit_wait_timeout:
  * @ec         : object to block on.
  * @key        : value returned by the matching prepare_wait().
- * @timeout_us : how long to block for, in microseconds.  Zero polls.
+ * @timeout_us : how long to block for, in microseconds.  Zero or less
+ *               polls.  A bound long enough to overflow the backend's
+ *               own unit is clamped, never wrapped.
  *
  * As retro_eventcount_commit_wait(), bounded in time.
  *

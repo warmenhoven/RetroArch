@@ -63,6 +63,21 @@ typedef char retro_eventcount_epoch_is_a_word_
 #endif
 #endif
 
+/* Where the atomics are not lock-free their read-modify-writes are not
+ * atomic either -- the volatile backend spells fetch-add as a plain
+ * load, add and store -- so two notifiers can lose an epoch bump and
+ * two waiters can lose a count.  The epoch and the waiter count are
+ * then kept under the mutex like everything else, which is what makes
+ * the any-number-of-waiters, any-number-of-notifiers promise in the
+ * header true on those builds as well.  Nothing is held across the
+ * caller's predicate window either way.
+ *
+ * The PS2 backend is atomic but deliberately not lock-free, so it
+ * takes the lock too; it has one core, where it is uncontended. */
+#if !defined(RETRO_ATOMIC_LOCK_FREE)
+#define RETRO_EC_LOCKED_BOOKKEEPING 1
+#endif
+
 #if defined(RETRO_EC_ADDR_LINUX)
 #include <unistd.h>
 #include <limits.h>
@@ -259,7 +274,13 @@ static void ec_win32_resolve(void)
    }
 
    if (ec_g.sleep == EC_SLEEP_EVENT)
+   {
       ec_g.tls_event = TlsAlloc();
+      /* Nothing else can park on this tier without it, so fall through
+       * to the condition variable rather than handing out a bad index. */
+      if (ec_g.tls_event == TLS_OUT_OF_INDEXES)
+         ec_g.sleep = 0;
+   }
 
    /* Spinning before the kernel wait only pays where the thread being
     * waited for can run at the same time.  On one processor it is pure
@@ -314,8 +335,15 @@ static bool ec_sleep(struct ec_waiter *w, LARGE_INTEGER *timeout)
             != EC_STATUS_TIMEOUT;
       default:
          {
-            DWORD ms = timeout
-               ? (DWORD)((-timeout->QuadPart + 9999) / 10000) : INFINITE;
+            DWORD ms = INFINITE;
+            if (timeout)
+            {
+               LONGLONG t = (-timeout->QuadPart + 9999) / 10000;
+               /* Rounding up costs at most a millisecond; wrapping a
+                * long wait into a short one would be a bug, so it is
+                * clamped instead.  INFINITE is not a duration. */
+               ms = (t >= (LONGLONG)INFINITE) ? INFINITE - 1 : (DWORD)t;
+            }
             return WaitForSingleObject(w->event, ms) != WAIT_TIMEOUT;
          }
    }
@@ -520,14 +548,6 @@ static bool ec_win32_park(retro_eventcount_t *ec, int key, bool bounded,
 }
 #endif
 
-/* True when this object parks on the epoch word itself and therefore
- * holds no lock.  A compile-time answer everywhere but Windows, where
- * it follows the runtime probe. */
-static INLINE int ec_is_lockless(const retro_eventcount_t *ec)
-{
-   return ec->lock == NULL;
-}
-
 bool retro_eventcount_init(retro_eventcount_t *ec)
 {
    int lockless = 0;
@@ -584,8 +604,17 @@ void retro_eventcount_notify(retro_eventcount_t *ec)
     * read-modify-write does not, and without it a notify could read
     * zero waiters while a consumer that has not yet seen the new epoch
     * is on its way into a park. */
+#if defined(RETRO_EC_LOCKED_BOOKKEEPING)
+   slock_lock(ec->lock);
+   retro_atomic_fetch_add_int(&ec->epoch, 1);
+   if (retro_atomic_load_relaxed_int(&ec->waiters) != 0)
+      scond_broadcast(ec->cond);
+   slock_unlock(ec->lock);
+   return;
+#else
    retro_atomic_fetch_add_int(&ec->epoch, 1);
    retro_atomic_thread_fence_seq_cst();
+#endif
 
 #if defined(RETRO_ATOMIC_LOCK_FREE)
    /* Only sound where the fence above is a real barrier.  Where it
@@ -624,15 +653,32 @@ int retro_eventcount_prepare_wait(retro_eventcount_t *ec)
     * mutex only across the re-check-and-sleep in commit_wait, not
     * across the caller's window -- which is what keeps N waiters from
     * serialising on this object to register. */
+#if defined(RETRO_EC_LOCKED_BOOKKEEPING)
+   {
+      int key;
+      slock_lock(ec->lock);
+      retro_atomic_fetch_add_int(&ec->waiters, 1);
+      key = retro_atomic_load_relaxed_int(&ec->epoch);
+      slock_unlock(ec->lock);
+      return key;
+   }
+#else
    retro_atomic_fetch_add_int(&ec->waiters, 1);
    retro_atomic_thread_fence_seq_cst();
 
    return retro_atomic_load_acquire_int(&ec->epoch);
+#endif
 }
 
 void retro_eventcount_cancel_wait(retro_eventcount_t *ec)
 {
+#if defined(RETRO_EC_LOCKED_BOOKKEEPING)
+   slock_lock(ec->lock);
+#endif
    retro_atomic_fetch_sub_int(&ec->waiters, 1);
+#if defined(RETRO_EC_LOCKED_BOOKKEEPING)
+   slock_unlock(ec->lock);
+#endif
 }
 
 void retro_eventcount_commit_wait(retro_eventcount_t *ec, int key)
@@ -666,6 +712,9 @@ bool retro_eventcount_commit_wait_timeout(retro_eventcount_t *ec,
       int key, int64_t timeout_us)
 {
    bool signalled = true;
+
+   if (timeout_us < 0)
+      timeout_us = 0;
 
 #if defined(RETRO_EC_ADDR_LINUX)
    if (retro_atomic_load_acquire_int(&ec->epoch) == key)
