@@ -5230,6 +5230,9 @@ static int action_ok_halt_replay(const char *path,
    return 0;
 }
 
+#ifdef HAVE_CHEEVOS
+/* Both of these are bound by the achievement entries below, which are
+ * compiled only with achievements on. */
 static int action_ok_close_submenu(const char* path,
    const char* label, unsigned type, size_t idx, size_t entry_idx)
 {
@@ -5243,6 +5246,7 @@ static int action_ok_cheevos_toggle_hardcore_mode(const char *path,
    action_cancel_pop_default(path, label, type, idx);
    return generic_action_ok_command(CMD_EVENT_RESUME);
 }
+#endif
 
 static int action_ok_undo_load_state(const char *path,
       const char *label, unsigned type, size_t idx, size_t entry_idx)
