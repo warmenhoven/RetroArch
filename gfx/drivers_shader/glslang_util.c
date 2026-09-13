@@ -84,18 +84,16 @@ void shader_line_buf_free(struct shader_line_buf *buf)
  * bytes.  32 covers the longest probe literal with margin. */
 #define SHADER_LINE_BUF_PROBE_SLACK 32
 
-static bool shader_line_buf_append_batch(struct shader_line_buf *buf,
-      const char *const *lines, const size_t *lens, size_t count)
+/* Make room for @data_bytes more bytes of text and @lines more line
+ * offsets.  The two arrays start life in one allocation; growing
+ * either splits the pair, so each branch below moves the other array
+ * to an allocation of its own before releasing the combined block. */
+static bool shader_line_buf_reserve(struct shader_line_buf *buf,
+      size_t data_bytes, size_t lines)
 {
-   size_t i;
-   size_t total_data  = 0;
-
-   /* Pre-calculate total bytes needed for all lines */
-   for (i = 0; i < count; i++)
-      total_data += lens[i] + 1; /* +1 for null terminator */
-
    /* Single data-capacity check */
    {
+      size_t total_data = data_bytes;
       size_t needed = buf->len + total_data + SHADER_LINE_BUF_PROBE_SLACK;
       if (needed > buf->cap)
       {
@@ -136,10 +134,10 @@ static bool shader_line_buf_append_batch(struct shader_line_buf *buf,
    }
 
    /* Single line_offsets capacity check */
-   if (buf->num_lines + count > buf->lines_cap)
+   if (buf->num_lines + lines > buf->lines_cap)
    {
       size_t  new_lcap = buf->lines_cap;
-      while (new_lcap < buf->num_lines + count)
+      while (new_lcap < buf->num_lines + lines)
          new_lcap *= 2;
       if (buf->_single_alloc)
       {
@@ -177,6 +175,21 @@ static bool shader_line_buf_append_batch(struct shader_line_buf *buf,
       }
    }
 
+   return true;
+}
+
+static bool shader_line_buf_append_batch(struct shader_line_buf *buf,
+      const char *const *lines, const size_t *lens, size_t count)
+{
+   size_t i;
+   size_t total_data = 0;
+
+   for (i = 0; i < count; i++)
+      total_data += lens[i] + 1; /* +1 for null terminator */
+
+   if (!shader_line_buf_reserve(buf, total_data, count))
+      return false;
+
    /* Bulk copy all lines — no further checks needed */
    for (i = 0; i < count; i++)
    {
@@ -188,6 +201,32 @@ static bool shader_line_buf_append_batch(struct shader_line_buf *buf,
    /* Zero the probe slack past the live data (reserved by the
     * capacity check above) so prefix probes on the final line read
     * defined, in-bounds bytes. */
+   memset(buf->data + buf->len, 0, SHADER_LINE_BUF_PROBE_SLACK);
+   return true;
+}
+
+/* Append an already-built run of lines: @data is the NUL-separated
+ * text as it sits in a shader_line_buf, @offsets the position of each
+ * line within it.  The text goes in with one copy and the offsets are
+ * rebased onto the end of @buf. */
+static bool shader_line_buf_append_block(struct shader_line_buf *buf,
+      const char *data, size_t len, const size_t *offsets, size_t lines)
+{
+   size_t i;
+   size_t base;
+
+   if (!lines)
+      return true;
+   if (!shader_line_buf_reserve(buf, len, lines))
+      return false;
+
+   base = buf->len;
+   memcpy(buf->data + base, data, len);
+   buf->len += len;
+
+   for (i = 0; i < lines; i++)
+      buf->line_offsets[buf->num_lines++] = base + offsets[i];
+
    memset(buf->data + buf->len, 0, SHADER_LINE_BUF_PROBE_SLACK);
    return true;
 }
@@ -367,6 +406,16 @@ struct slang_include_cache_entry
    char    *path;
    uint8_t *data;
    int64_t  len;
+   /* The lines this file expands to when it is included, in the
+    * shader_line_buf layout: NUL-separated text plus the offset of
+    * each line within it.  An include expands the same way wherever
+    * it appears - the '#line' directive that returns to the parent is
+    * written by the parent after the recursive call - so one capture
+    * serves every pass that includes it. */
+   char    *exp_data;
+   size_t  *exp_offsets;
+   size_t   exp_len;
+   size_t   exp_lines;
 };
 
 struct slang_include_cache
@@ -385,11 +434,24 @@ static void slang_include_cache_free(struct slang_include_cache *cache)
    {
       free(cache->entries[i].path);
       free(cache->entries[i].data);
+      free(cache->entries[i].exp_data);
+      free(cache->entries[i].exp_offsets);
    }
    free(cache->entries);
    cache->entries = NULL;
    cache->num     = 0;
    cache->cap     = 0;
+}
+
+static struct slang_include_cache_entry *slang_include_cache_find(
+      struct slang_include_cache *cache, const char *path)
+{
+   size_t i;
+   if (cache)
+      for (i = 0; i < cache->num; i++)
+         if (string_is_equal(cache->entries[i].path, path))
+            return &cache->entries[i];
+   return NULL;
 }
 
 /* Look up @path; on a miss read it and record it.
@@ -412,16 +474,14 @@ static bool slang_include_cache_read(struct slang_include_cache *cache,
 
    *owned = false;
 
-   if (cache)
    {
-      for (i = 0; i < cache->num; i++)
+      struct slang_include_cache_entry *hit =
+            slang_include_cache_find(cache, path);
+      if (hit)
       {
-         if (string_is_equal(cache->entries[i].path, path))
-         {
-            *buf = cache->entries[i].data;
-            *len = cache->entries[i].len;
-            return true;
-         }
+         *buf = hit->data;
+         *len = hit->len;
+         return true;
       }
    }
 
@@ -449,9 +509,13 @@ static bool slang_include_cache_read(struct slang_include_cache *cache,
          {
             /* Retain the buffer that was just read rather than a
              * duplicate of it; the caller only ever reads from it. */
-            cache->entries[cache->num].path = path_copy;
-            cache->entries[cache->num].data = data;
-            cache->entries[cache->num].len  = n;
+            cache->entries[cache->num].path        = path_copy;
+            cache->entries[cache->num].data        = data;
+            cache->entries[cache->num].len         = n;
+            cache->entries[cache->num].exp_data    = NULL;
+            cache->entries[cache->num].exp_offsets = NULL;
+            cache->entries[cache->num].exp_len     = 0;
+            cache->entries[cache->num].exp_lines   = 0;
             cache->num++;
             *buf = data;
             *len = n;
@@ -531,6 +595,12 @@ static bool glslang_read_shader_file_internal(const char *path,
     * longest such line seen, not to the file. */
    char   *cr_scratch        = NULL;
    size_t  cr_scratch_cap    = 0;
+   /* Where this file's lines start in @output, so the run it produces
+    * can be handed to the cache once it is complete. */
+   size_t  cap_len           = 0;
+   size_t  cap_lines         = 0;
+   bool    capture           = false;
+   bool    nested            = false;
 
    tmp[0] = '\0';
 
@@ -542,6 +612,27 @@ static bool glslang_read_shader_file_internal(const char *path,
 
    if (!basename || basename[0] == '\0')
       return false;
+
+   /* An include expands to the same lines wherever it appears: the
+    * '#line' directive that returns to the parent's position is
+    * written by the parent after the call below, and nothing else
+    * here reads the parent.  So the first expansion of a file that
+    * includes nothing itself is captured, and every later one is a
+    * copy of it.  A file that does include is left out: its run is
+    * mostly the runs of the leaves below it, which are captured on
+    * their own, and holding a second copy of them costs far more
+    * memory than the scan it would save. */
+   if (!root_file && cache)
+   {
+      struct slang_include_cache_entry *hit =
+            slang_include_cache_find(cache, path);
+      if (hit && hit->exp_data)
+         return shader_line_buf_append_block(output, hit->exp_data,
+               hit->exp_len, hit->exp_offsets, hit->exp_lines);
+      capture   = true;
+      cap_len   = output->len;
+      cap_lines = output->num_lines;
+   }
 
    /* Precompute the #line directive suffix: ' "basename"'
     * so the inner loop only needs to write the line number. */
@@ -721,6 +812,7 @@ static bool glslang_read_shader_file_internal(const char *path,
                   goto cleanup;
                }
 
+               nested = true;
                if (!glslang_read_shader_file_internal(include_path, output,
                      false, include_optional, cache))
                {
@@ -765,6 +857,38 @@ static bool glslang_read_shader_file_internal(const char *path,
    ret = true;
 
 cleanup:
+   /* Re-find rather than hold a pointer: a nested include may have
+    * grown the entry array out from under one taken above. */
+   if (ret && capture && !nested && output->num_lines > cap_lines)
+   {
+      struct slang_include_cache_entry *e =
+            slang_include_cache_find(cache, path);
+      if (e && !e->exp_data)
+      {
+         size_t  blk_len   = output->len       - cap_len;
+         size_t  blk_lines = output->num_lines - cap_lines;
+         char   *blk       = (char*)malloc(blk_len);
+         size_t *offs      = (size_t*)malloc(blk_lines * sizeof(size_t));
+         if (blk && offs)
+         {
+            size_t i;
+            memcpy(blk, output->data + cap_len, blk_len);
+            for (i = 0; i < blk_lines; i++)
+               offs[i] = output->line_offsets[cap_lines + i] - cap_len;
+            e->exp_data    = blk;
+            e->exp_offsets = offs;
+            e->exp_len     = blk_len;
+            e->exp_lines   = blk_lines;
+         }
+         else
+         {
+            /* Not remembered is only slower, never wrong. */
+            free(blk);
+            free(offs);
+         }
+      }
+   }
+
    free(cr_scratch);
    if (buf_owned)
       free((void*)buf);
