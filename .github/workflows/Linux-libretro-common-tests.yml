@@ -76,10 +76,12 @@ jobs:
           # coverage, in order -- coverage files collide otherwise.
           # Any suite failing to build, or any check failing, or any
           # sanitizer report, fails the job.
-          # 'all' by name: the default goal of Makefile.test is
+          # 'unit-tests' by name: the default goal of Makefile.test is
           # win32-configs, so a bare make here builds the Windows A/W
-          # matrix and none of the suites this step exists to run.
-          make -f Makefile.test all \
+          # matrix and none of the suites this step exists to run.  The
+          # 'all' target adds the concurrency and I/O samples, whose
+          # runtime depends on how many processors the runner has.
+          make -f Makefile.test unit-tests \
              LIBCHECK_CFLAGS="$(pkg-config --cflags check)" \
              CFLAGS="$(pkg-config --cflags check)"
           echo "[pass] libretro-common unit test suites"
