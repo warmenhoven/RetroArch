@@ -833,7 +833,7 @@ typedef struct
       bool      bypassed;
       float    *in_f;            /* frames * channels, interleaved, this batch */
       int16_t  *in_i;
-      float    *pair_in;         /* one pair's frames, for the resampler */
+      float    *pair_in;         /* pair scratch; NULL when channels == 2 */
       float    *pair_out;
       int16_t  *pair_in_i;
       int16_t  *pair_out_i;

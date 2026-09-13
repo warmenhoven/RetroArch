@@ -2,12 +2,15 @@
 #include <stdlib.h>
 #include <string.h>
 static unsigned heap_calls;
+static unsigned fail_at;
 static struct { void *ptr; size_t size; } allocations[128];
 static void *tracked_malloc(size_t size)
 {
    unsigned i;
-   void *p = malloc(size);
+   void *p;
    heap_calls++;
+   if (fail_at && heap_calls == fail_at) return NULL;
+   p = malloc(size);
    if (!p) return NULL;
    for (i = 0; i < 128; i++)
       if (!allocations[i].ptr || allocations[i].ptr == p)
@@ -70,10 +73,12 @@ static void check_lane(int integer)
       CHECK(audio_driver_extra_prepare(&st, 2, 0, counts[step], !integer, integer));
       CHECK(st.extra.cap_out >= 16384);
       if (step >= 3) CHECK(heap_calls == before);
-      CHECK(allocation_size(st.extra.pair_in) >= counts[step] * 2 * sizeof(float));
-      CHECK(allocation_size(st.extra.pair_in_i) >= counts[step] * 2 * sizeof(int16_t));
-      if (allocation_size(st.extra.pair_in) < counts[step] * 2 * sizeof(float)
-            || allocation_size(st.extra.pair_in_i) < counts[step] * 2 * sizeof(int16_t)) break;
+      CHECK(!st.extra.pair_in && !st.extra.pair_in_i);
+      CHECK(!st.extra.pair_out && !st.extra.pair_out_i);
+      CHECK(allocation_size(st.extra.in_f) >= counts[step] * 2 * sizeof(float));
+      CHECK(allocation_size(st.extra.in_i) >= counts[step] * 2 * sizeof(int16_t));
+      if (allocation_size(st.extra.in_f) < counts[step] * 2 * sizeof(float)
+            || allocation_size(st.extra.in_i) < counts[step] * 2 * sizeof(int16_t)) break;
       /* Refuse to exercise unsafe allocations when run against the old code. */
       if (st.extra.cap_out < 16384) break;
       for (i = 0; i < counts[step] * 2; i++)
@@ -208,10 +213,13 @@ static void check_direct_bypass(void)
                unsigned before = heap_calls;
                if (n > 32) n = 32;
                st.extra.cap_out = cap;
-               memset(st.extra.pair_in, 0x5a, 32 * 2 * sizeof(float));
-               memset(st.extra.pair_in_i, 0x5a, 32 * 2 * sizeof(int16_t));
-               memset(st.extra.pair_out, 0x5a, 32 * 2 * sizeof(float));
-               memset(st.extra.pair_out_i, 0x5a, 32 * 2 * sizeof(int16_t));
+               if (ch != 2)
+               {
+                  memset(st.extra.pair_in, 0x5a, 32 * 2 * sizeof(float));
+                  memset(st.extra.pair_in_i, 0x5a, 32 * 2 * sizeof(int16_t));
+                  memset(st.extra.pair_out, 0x5a, 32 * 2 * sizeof(float));
+                  memset(st.extra.pair_out_i, 0x5a, 32 * 2 * sizeof(int16_t));
+               }
                memset(st.extra.out_f, 0x5a, 32 * ch * sizeof(float));
                memset(st.extra.out_i, 0x5a, 32 * ch * sizeof(int16_t));
                if (source_float)
@@ -230,15 +238,23 @@ static void check_direct_bypass(void)
                CHECK(heap_calls == before);
                if (integer) CHECK(memcmp(st.extra.out_i, expected_i, n * ch * sizeof(int16_t)) == 0);
                else CHECK(memcmp(st.extra.out_f, expected_f, n * ch * sizeof(float)) == 0);
-               for (i = 0; i < 32 * 2 * sizeof(float); i++)
+               if (ch != 2)
                {
-                  CHECK(((unsigned char*)st.extra.pair_in)[i] == 0x5a);
-                  CHECK(((unsigned char*)st.extra.pair_out)[i] == 0x5a);
+                  for (i = 0; i < 32 * 2 * sizeof(float); i++)
+                  {
+                     CHECK(((unsigned char*)st.extra.pair_in)[i] == 0x5a);
+                     CHECK(((unsigned char*)st.extra.pair_out)[i] == 0x5a);
+                  }
+                  for (i = 0; i < 32 * 2 * sizeof(int16_t); i++)
+                  {
+                     CHECK(((unsigned char*)st.extra.pair_in_i)[i] == 0x5a);
+                     CHECK(((unsigned char*)st.extra.pair_out_i)[i] == 0x5a);
+                  }
                }
-               for (i = 0; i < 32 * 2 * sizeof(int16_t); i++)
+               else
                {
-                  CHECK(((unsigned char*)st.extra.pair_in_i)[i] == 0x5a);
-                  CHECK(((unsigned char*)st.extra.pair_out_i)[i] == 0x5a);
+                  CHECK(!st.extra.pair_in && !st.extra.pair_out);
+                  CHECK(!st.extra.pair_in_i && !st.extra.pair_out_i);
                }
                for (i = (unsigned)(n * ch * sizeof(float)); i < 32 * ch * sizeof(float); i++)
                   CHECK(((unsigned char*)st.extra.out_f)[i] == 0x5a);
@@ -284,10 +300,6 @@ static void check_direct_pair(void)
                st.extra.in_i[i] = (int16_t)((int)(i % 53) * 977 - 25000);
                st.extra.in_f[i] = ((int)(i % 37) - 18) / 16.0f;
             }
-            memset(st.extra.pair_in, 0x5a, 127 * 2 * sizeof(float));
-            memset(st.extra.pair_out, 0x5a, 512 * 2 * sizeof(float));
-            memset(st.extra.pair_in_i, 0x5a, 127 * 2 * sizeof(int16_t));
-            memset(st.extra.pair_out_i, 0x5a, 512 * 2 * sizeof(int16_t));
             if (integer)
             {
                struct resampler_data_int16 d;
@@ -312,17 +324,67 @@ static void check_direct_pair(void)
             audio_driver_extra_resample(&st, ratios[pass], counts[pass], false, integer != 0);
             CHECK(!st.extra.pending && st.extra.out_frames == produced);
             CHECK(heap_calls == before);
+            CHECK(!st.extra.pair_in && !st.extra.pair_out);
+            CHECK(!st.extra.pair_in_i && !st.extra.pair_out_i);
             if (integer) CHECK(memcmp(expected_i, st.extra.out_i, produced * 2 * sizeof(int16_t)) == 0);
             else CHECK(memcmp(expected_f, st.extra.out_f, produced * 2 * sizeof(float)) == 0);
-            for (i = 0; i < 127 * 2 * sizeof(float); i++) CHECK(((unsigned char*)st.extra.pair_in)[i] == 0x5a);
-            for (i = 0; i < 512 * 2 * sizeof(float); i++) CHECK(((unsigned char*)st.extra.pair_out)[i] == 0x5a);
-            for (i = 0; i < 127 * 2 * sizeof(int16_t); i++) CHECK(((unsigned char*)st.extra.pair_in_i)[i] == 0x5a);
-            for (i = 0; i < 512 * 2 * sizeof(int16_t); i++) CHECK(((unsigned char*)st.extra.pair_out_i)[i] == 0x5a);
          }
          if (integer) sinc_resampler_int16_free(reference);
          else sinc_resampler.free(reference);
          audio_driver_extra_free(&st);
       }
+}
+
+static void check_scratch_lifecycle(void)
+{
+   static audio_driver_state_t st;
+   const unsigned layouts[] = {2, 4, 2, 1, 2, 5, 2};
+   unsigned integer, step, slot, i;
+   for (integer = 0; integer < 2; integer++)
+   {
+      memset(&st, 0, sizeof(st));
+      st.resampler = &sinc_resampler;
+      st.resampler_quality = RESAMPLER_QUALITY_NORMAL;
+      st.src_ratio_orig = 1;
+      st.resampler_int16_free = sinc_resampler_int16_free;
+      st.resampler_int16_process = sinc_resampler_int16_process;
+      for (step = 0; step < sizeof(layouts) / sizeof(layouts[0]); step++)
+      {
+         unsigned ch = layouts[step];
+         unsigned before = heap_calls;
+         CHECK(audio_driver_extra_prepare(&st, ch, step, 32, !integer, integer));
+         CHECK(heap_calls - before == (ch == 2 ? 4 : 8));
+         CHECK((st.extra.pair_in != NULL) == (ch != 2));
+         CHECK((st.extra.pair_out != NULL) == (ch != 2));
+         CHECK((st.extra.pair_in_i != NULL) == (ch != 2));
+         CHECK((st.extra.pair_out_i != NULL) == (ch != 2));
+         memset(st.extra.in_f, 0, 32 * ch * sizeof(float));
+         memset(st.extra.in_i, 0, 32 * ch * sizeof(int16_t));
+         st.extra.pending = true;
+         audio_driver_extra_resample(&st, 1.25, 32, false, integer);
+         CHECK(!st.extra.pending && st.extra.out_frames <= st.extra.cap_out);
+         for (i = 0; i < st.extra.out_frames * ch; i++)
+         {
+            if (integer) CHECK(st.extra.out_i[i] == 0);
+            else CHECK(st.extra.out_f[i] == 0.0f);
+         }
+         before = heap_calls;
+         CHECK(audio_driver_extra_prepare(&st, ch, step, 32, !integer, integer));
+         CHECK(heap_calls == before);
+      }
+      audio_driver_extra_free(&st);
+      for (slot = 1; slot <= 4; slot++)
+      {
+         fail_at = heap_calls + slot;
+         CHECK(!audio_driver_extra_prepare(&st, 2, 0, 32, !integer, integer));
+         fail_at = 0;
+         CHECK(st.extra.channels == 0 && st.extra.nres == 0);
+         CHECK(!st.extra.in_f && !st.extra.in_i && !st.extra.out_f && !st.extra.out_i);
+         CHECK(!st.extra.pair_in && !st.extra.pair_out && !st.extra.pair_in_i && !st.extra.pair_out_i);
+         CHECK(audio_driver_extra_prepare(&st, 2, 0, 32, !integer, integer));
+         audio_driver_extra_free(&st);
+      }
+   }
 }
 
 int main(void)
@@ -332,6 +394,7 @@ int main(void)
    check_bypass();
    check_direct_bypass();
    check_direct_pair();
+   check_scratch_lifecycle();
    printf("extra capacity: %u failures\n", failures);
    return failures != 0;
 }
