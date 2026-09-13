@@ -4555,6 +4555,9 @@ void video_driver_build_info(video_frame_info_t *video_info)
    video_info->hdr_paper_white_nits         = settings->floats.video_hdr_paper_white_nits;
    video_info->hdr_expand_gamut             = settings->uints.video_hdr_expand_gamut;
    video_info->menu_linear_filter           = settings->bools.menu_linear_filter;
+   video_info->ctx_scaling                  = settings->bools.video_ctx_scaling;
+   video_info->dingux_ipu_filter_type       = settings->uints.video_dingux_ipu_filter_type;
+   video_info->dingux_rs90_softfilter_type  = settings->uints.video_dingux_rs90_softfilter_type;
    video_info->scale_integer                = settings->bools.video_scale_integer;
    video_info->video_smooth                 = settings->bools.video_smooth;
    video_info->swapchain_bit_depth          = settings->uints.video_swapchain_bit_depth;

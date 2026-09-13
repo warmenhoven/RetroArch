@@ -4321,6 +4321,13 @@ static bool gl2_frame(void *data, const void *frame,
    gl->scrgb.paper_white_nits = video_info->hdr_paper_white_nits;
    gl->scrgb.expand_gamut     = video_info->hdr_expand_gamut;
 
+   /* Travels with the frame, for gl2_set_aspect_ratio() to read rather
+    * than the setting the menu writes */
+   if (video_info->ctx_scaling)
+      gl->flags |=  GL2_FLAG_CTX_SCALING;
+   else
+      gl->flags &= ~GL2_FLAG_CTX_SCALING;
+
    /* Whether to read frames back travels with the frame, so this thread
     * does not read the recording state the main thread writes. */
    if (video_info->gpu_recording)
@@ -6309,7 +6316,9 @@ static void gl2_set_aspect_ratio(void *data, unsigned aspect_ratio_idx)
    gl->flags        |= (GL2_FLAG_KEEP_ASPECT
                      |  GL2_FLAG_SHOULD_RESIZE);
 #if defined(HAVE_ODROIDGO2)
-   if (config_get_ptr()->bools.video_ctx_scaling)
+   /* What the last frame carried, not what the setting says now: this
+    * runs on the video thread under the threaded wrapper. */
+   if (gl->flags & GL2_FLAG_CTX_SCALING)
       gl->flags     &= ~GL2_FLAG_KEEP_ASPECT;
 #endif
 }

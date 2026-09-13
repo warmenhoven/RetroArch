@@ -421,6 +421,10 @@ typedef struct video_frame_info
     * writes on the main thread. */
    unsigned hdr_expand_gamut;
    unsigned swapchain_bit_depth;
+   /* Read by a driver answering set_filtering(), which the threaded
+    * wrapper runs on the video thread */
+   unsigned dingux_ipu_filter_type;
+   unsigned dingux_rs90_softfilter_type;
 #ifdef GEKKO
    unsigned overscan_correction_top;
    unsigned overscan_correction_bottom;
@@ -517,6 +521,9 @@ typedef struct video_frame_info
    bool font_enable;
    bool hdr_support;
    bool menu_linear_filter;
+   /* Read by a driver answering set_aspect_ratio(), which the threaded
+    * wrapper runs on the video thread */
+   bool ctx_scaling;
    bool scale_integer;
    bool video_smooth;
    bool libretro_running;

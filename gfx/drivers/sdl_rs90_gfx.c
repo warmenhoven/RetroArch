@@ -104,6 +104,10 @@ struct sdl_rs90_video
    bool menu_active;
    bool was_in_menu;
    bool mode_valid;
+   /* What the last frame said the softfilter should be: set_filtering()
+    * runs on the video thread under the threaded wrapper, and reading
+    * the setting there races the menu writing it. */
+   unsigned frame_softfilter_type;
 };
 
 /* Image interpolation START */
@@ -1328,12 +1332,13 @@ static float sdl_rs90_get_refresh_rate(void *data)
 static void sdl_rs90_set_filtering(void *data, unsigned index, bool smooth, bool ctx_scaling)
 {
    sdl_rs90_video_t *vid                            = (sdl_rs90_video_t*)data;
-   settings_t *settings                             = config_get_ptr();
-   enum dingux_rs90_softfilter_type softfilter_type = (settings) ?
-         (enum dingux_rs90_softfilter_type)settings->uints.video_dingux_rs90_softfilter_type :
+   /* What the last frame carried, not what the setting says now: this
+    * runs on the video thread under the threaded wrapper. */
+   enum dingux_rs90_softfilter_type softfilter_type = (vid) ?
+         (enum dingux_rs90_softfilter_type)vid->frame_softfilter_type :
                DINGUX_RS90_SOFTFILTER_POINT;
 
-   if (!vid || !settings)
+   if (!vid)
       return;
 
    /* Update software filter setting, if required */

@@ -69,7 +69,11 @@ enum gl2_flags
    /* GPU recording is on: taken from the frame the frontend hands over,
     * so this thread never reads the recording state the main thread
     * writes (video_frame_info_t::gpu_recording). */
-   GL2_FLAG_GPU_RECORDING          = (1 << 24)
+   GL2_FLAG_GPU_RECORDING          = (1 << 24),
+   /* What the last frame said context scaling should be:
+    * set_aspect_ratio() runs on the video thread under the threaded
+    * wrapper, and reading the setting there races the menu writing it. */
+   GL2_FLAG_CTX_SCALING            = (1 << 25)
 };
 
 struct gl2
