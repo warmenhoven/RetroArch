@@ -3998,6 +3998,41 @@ static size_t audio_driver_pipe_target_frames(audio_driver_state_t *audio_st)
 }
 #endif
 
+/* Input and output do not overlap. Convert only the two populated slots. */
+static INLINE void audio_driver_pipe_widen_stereo(void *output, const void *input,
+      size_t frames, unsigned channels, bool input_float, bool output_float)
+{
+   size_t f;
+   size_t sample = output_float ? sizeof(float) : sizeof(int16_t);
+   memset(output, 0, frames * channels * sample);
+   if (input_float == output_float)
+   {
+      for (f = 0; f < frames; f++)
+         memcpy((uint8_t*)output + f * channels * sample,
+               (const uint8_t*)input + f * 2 * sample, 2 * sample);
+   }
+   else if (output_float)
+   {
+      float *dst = (float*)output;
+      const int16_t *src = (const int16_t*)input;
+      for (f = 0; f < frames; f++)
+      {
+         dst[f * channels]     = src[2 * f] * (1.0f / 32768.0f);
+         dst[f * channels + 1] = src[2 * f + 1] * (1.0f / 32768.0f);
+      }
+   }
+   else
+   {
+      int16_t *dst = (int16_t*)output;
+      const float *src = (const float*)input;
+      for (f = 0; f < frames; f++)
+      {
+         dst[f * channels]     = (int16_t)audio_float_to_s16_sat(src[2 * f]);
+         dst[f * channels + 1] = (int16_t)audio_float_to_s16_sat(src[2 * f + 1]);
+      }
+   }
+}
+
 /**
  * audio_driver_submit:
  *
@@ -4050,12 +4085,10 @@ static void audio_driver_submit_width(audio_driver_state_t *audio_st,
          retro_atomic_store_release_int(&audio_st->pipe_layout, (int)AUDIO_LAYOUT_STEREO);
          while (stereo_frames)
          {
-            size_t n = stereo_frames > pass ? pass : stereo_frames, f;
+            size_t n = stereo_frames > pass ? pass : stereo_frames;
             uint8_t *dst = audio_st->pipe_conv;
-            memset(dst, 0, n * pc * sample);
-            for (f = 0; f < n; f++)
-               memcpy(dst + f * pc * sample, (const uint8_t*)data + f * 2 * sample, 2 * sample);
-            audio_driver_submit_width(audio_st, slowmotion_ratio, dst, n * pc, is_float,
+            audio_driver_pipe_widen_stereo(dst, data, n, pc, is_float, audio_st->pipe_float);
+            audio_driver_submit_width(audio_st, slowmotion_ratio, dst, n * pc, audio_st->pipe_float,
                   is_slowmotion, is_fastforward, pc);
             stereo_frames -= n;
             data = (const uint8_t*)data + n * 2 * sample;

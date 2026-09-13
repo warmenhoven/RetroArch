@@ -784,6 +784,45 @@ static void suspended_multichannel_case(bool floating, bool discrete)
    AUDIO_FLAGS_CLEAR(st, AUDIO_FLAG_SUSPENDED);
 }
 
+static void stereo_ring_format_case(bool source_float, bool ring_float)
+{
+   const size_t frames = 5000;
+   audio_driver_state_t *st = &audio_driver_st;
+   size_t sample = ring_float ? sizeof(float) : sizeof(int16_t);
+   float *inf = (float*)malloc(frames * 2 * sizeof(float));
+   int16_t *ini = (int16_t*)malloc(frames * 2 * sizeof(int16_t));
+   uint8_t *expected = (uint8_t*)malloc(frames * 2 * sizeof(float));
+   uint8_t *actual = (uint8_t*)malloc(frames * AUDIO_PIPE_CANON_CHANNELS * sizeof(float));
+   size_t f, c;
+   CHECK(inf && ini && expected && actual, "stereo format buffers");
+   if (!inf || !ini || !expected || !actual) goto end;
+   CHECK(pipe_up(source_float, ring_float), "stereo format stand-up");
+   for (f = 0; f < frames * 2; f++)
+   {
+      ini[f] = (int16_t)((int)(f * 7919 % 65536) - 32768);
+      inf[f] = ini[f] / 16384.0f;
+   }
+   if (source_float == ring_float)
+      memcpy(expected, source_float ? (const void*)inf : (const void*)ini, frames * 2 * sample);
+   else if (ring_float) convert_s16_to_float((float*)expected, ini, frames * 2, 1.0f);
+   else convert_float_to_s16((int16_t*)expected, inf, frames * 2);
+   audio_driver_submit(st, 1.0f, source_float ? (const void*)inf : (const void*)ini,
+         frames * 2, source_float, false, false);
+   CHECK(retro_spsc_read(&st->pipe_ring, actual, frames * st->pipe_frame_bytes)
+         == frames * st->pipe_frame_bytes, "stereo ring lost frames");
+   for (f = 0; f < frames; f++)
+   {
+      CHECK(!memcmp(actual + f * st->pipe_frame_bytes, expected + f * 2 * sample, 2 * sample),
+            "stereo ring front mismatch at %u", (unsigned)f);
+      for (c = 2 * sample; c < st->pipe_frame_bytes; c++)
+         CHECK(actual[f * st->pipe_frame_bytes + c] == 0, "stereo ring extra slot is not silent");
+   }
+   CHECK((unsigned)retro_atomic_load_acquire_int(&st->pipe_layout) == AUDIO_LAYOUT_STEREO,
+         "stereo ring layout changed");
+end:
+   free(actual); free(expected); free(ini); free(inf);
+}
+
 int main(void)
 {
    /* One case at a time, for when a single one is being worked on:
@@ -795,6 +834,10 @@ int main(void)
    RUN("suspended", suspended_multichannel_case(false, true));
    RUN("suspended", suspended_multichannel_case(true, false));
    RUN("suspended", suspended_multichannel_case(false, false));
+   RUN("wideformat", stereo_ring_format_case(false, true));
+   RUN("wideformat", stereo_ring_format_case(true, false));
+   RUN("wideformat", stereo_ring_format_case(false, false));
+   RUN("wideformat", stereo_ring_format_case(true, true));
    RUN("canonical", bounded_canonical_case(true));
    RUN("canonical", bounded_canonical_case(false));
    RUN("large", large_inline_batch_case(true, false));

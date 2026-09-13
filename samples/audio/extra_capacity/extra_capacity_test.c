@@ -695,8 +695,60 @@ static void check_hq_policy(void)
          && !audio_driver_st.resampler_data_int16 && !audio_driver_st.resampler);
 }
 
+static void check_wide_stereo(void)
+{
+   static const uint32_t special[] = {
+      0, 0x80000000u, 0x7f800000u, 0xff800000u, 0x7fc12345u,
+      0xffc12345u, 0x7f7fffffu, 0xff7fffffu, 1, 0x80000001u
+   };
+   union { float f[2048]; int16_t i[4096]; uint8_t bytes[8192]; } input, saved, reference;
+   union { float align; uint8_t bytes[8192 + 32]; } output;
+   const unsigned pc = AUDIO_PIPE_CANON_CHANNELS;
+   const size_t pass = AUDIO_PIPE_SLICE_INT16S / pc;
+   unsigned from, to, base;
+   unsigned before = heap_calls;
+   for (from = 0; from < 2; from++)
+      for (to = 0; to < 2; to++)
+         for (base = 0; base < 65536; )
+         {
+            size_t frames = (65536 - base) / 2;
+            size_t sample = to ? sizeof(float) : sizeof(int16_t);
+            size_t f, c;
+            if (frames > pass) frames = pass;
+            memset(&input, 0x35, sizeof(input));
+            for (f = 0; f < frames * 2; f++)
+            {
+               int32_t value = (int32_t)(base + f) - 32768;
+               if (!from) input.i[f] = (int16_t)value;
+               else if (base + f < sizeof(special) / sizeof(special[0]))
+                  memcpy(&input.f[f], &special[base + f], sizeof(float));
+               else input.f[f] = (value + 0.5f) / 32768.0f;
+            }
+            memcpy(&saved, &input, sizeof(input));
+            if (from == to) memcpy(&reference, &input, sizeof(input));
+            else if (to) convert_s16_to_float(reference.f, input.i, frames * 2, 1.0f);
+            else convert_float_to_s16(reference.i, input.f, frames * 2);
+            memset(&output, 0xa5, sizeof(output));
+            audio_driver_pipe_widen_stereo(output.bytes + 16, &input, frames, pc, from, to);
+            CHECK(!memcmp(&input, &saved, sizeof(input)));
+            for (f = 0; f < frames; f++)
+            {
+               CHECK(!memcmp(output.bytes + 16 + f * pc * sample,
+                        reference.bytes + f * 2 * sample, 2 * sample));
+               for (c = 2 * sample; c < pc * sample; c++)
+                  CHECK(output.bytes[16 + f * pc * sample + c] == 0);
+            }
+            for (f = 0; f < 16; f++) CHECK(output.bytes[f] == 0xa5);
+            for (f = 16 + frames * pc * sample; f < sizeof(output); f++)
+               CHECK(output.bytes[f] == 0xa5);
+            base += (unsigned)frames * 2;
+         }
+   CHECK(heap_calls == before);
+}
+
 int main(void)
 {
+   check_wide_stereo();
    check_lane(0);
    check_lane(1);
    check_bypass();
