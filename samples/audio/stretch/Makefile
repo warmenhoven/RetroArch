@@ -1,0 +1,19 @@
+CC = gcc
+ROOT = ../../..
+CPPFLAGS += -I$(ROOT)/libretro-common/include
+CFLAGS += -O2 -std=c89 -Wall -Wextra
+LDFLAGS += -Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc -Wl,--wrap=free
+LDLIBS += -lm
+ifneq ($(SANITIZER),)
+CFLAGS += -fsanitize=$(SANITIZER) -fno-omit-frame-pointer -g
+LDFLAGS += -fsanitize=$(SANITIZER)
+endif
+SOURCES = stretch_test.c $(ROOT)/audio/audio_stretch.c
+all: stretch_test
+stretch_test: $(SOURCES) $(ROOT)/audio/audio_stretch.h $(ROOT)/libretro-common/include/audio/wsola_search.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(SOURCES) $(LDFLAGS) $(LDLIBS) -o $@
+check: stretch_test
+	./stretch_test
+clean:
+	rm -f stretch_test stretch_test.exe
+.PHONY: all check clean

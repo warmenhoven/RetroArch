@@ -994,6 +994,7 @@ AUDIO
 ============================================================ */
 #include "../audio/audio_driver.c"
 #include "../audio/audio_upmix.c"
+#include "../audio/audio_stretch.c"
 #include "../audio/audio_binaural.c"
 #if defined(__PS3__) || defined (__PSL1GHT__)
 #include "../audio/drivers/ps3_audio.c"
