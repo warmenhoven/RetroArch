@@ -86,6 +86,31 @@ STUBS="$(dirname "$0")/stubs"
 # host headers are the real ones and deprecate things the target's do not
 ARMWARN="$WARN -Wno-deprecated-declarations"
 
+# A platform's own video driver, which the arm lanes above do not reach:
+# they check that one file's headers resolve, not that the driver a
+# console actually draws with still compiles. Settings a driver reads
+# while answering the frontend have moved into the frame descriptor more
+# than once, and each time these drivers were the ones left behind -
+# nothing in CI compiles them.
+#
+# @extra carries whatever headers the driver needs that the runner has;
+# a lane whose headers are absent says so and is not a failure.
+platform_video() {
+   name="$1"; defs="$2"; extra="$3"; tu="$4"; probe="$5"
+   if [ -n "$probe" ] && [ ! -f "$probe" ]; then
+      echo "skip  $name (no $probe)"
+      return
+   fi
+   if ! out=$($CC $WARN $extra $INC $BASE $defs -fsyntax-only "$tu" 2>&1); then
+      echo "FAIL  $name"
+      echo "      $tu"
+      printf '%s\n' "$out" | sed 's/^/      /' | head -10
+      fail=1
+   else
+      echo "ok    $name"
+   fi
+}
+
 arm() {
    name="$1"; stub="$2"; defs="$3"
    inc="$INC"
@@ -113,6 +138,14 @@ arm "orbis"      orbis      "-DORBIS"
 arm "ps3"        ps3        "-D__PSL1GHT__ -DHAVE_MEMINFO"
 arm "ps2"        ""         "-DPS2"
 arm "emscripten" emscripten "-D__EMSCRIPTEN__"
+
+platform_video "odroidgo2 video" \
+   "-DHAVE_ODROIDGO2 -DHAVE_OPENGL -DHAVE_GLSL" "" \
+   gfx/drivers/gl2.c ""
+platform_video "dingux video"   "-DDINGUX" "-I/usr/include/SDL" \
+   gfx/drivers/sdl_dingux_gfx.c /usr/include/SDL/SDL.h
+platform_video "rs90 video"     "-DDINGUX -DRS90" "-I/usr/include/SDL" \
+   gfx/drivers/sdl_rs90_gfx.c /usr/include/SDL/SDL.h
 arm "win32"      win32      "-D_WIN32 -D_WIN32_WINNT=0x0600"
 arm "win32-old"  win32      "-D_WIN32 -D_WIN32_WINNT=0x0400"
 arm "macos"      apple      "-D__APPLE__"
