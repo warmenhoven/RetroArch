@@ -3,7 +3,7 @@ ROOT = ../../..
 COMMON = $(ROOT)/libretro-common
 CPPFLAGS += -DRARCH_INTERNAL -I$(ROOT) -I$(COMMON)/include -I$(ROOT)/deps -I$(ROOT)/deps/stb
 CFLAGS += -O2 -std=gnu99 -ffunction-sections -fdata-sections
-LDFLAGS += -Wl,--gc-sections
+LDFLAGS += -Wl,--gc-sections -Wl,--wrap=free
 LDLIBS += -lm
 ifneq ($(SANITIZER),)
 CFLAGS += -fsanitize=$(SANITIZER) -fno-omit-frame-pointer -g

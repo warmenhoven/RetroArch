@@ -668,8 +668,10 @@ static bool audio_driver_extra_prepare(audio_driver_state_t *audio_st,
       audio_st->extra.in_i = (int16_t*)malloc(frames * channels * sizeof(int16_t));
       if (channels != 2)
       {
-         audio_st->extra.pair_in   = (float*)malloc(frames * 2 * sizeof(float));
-         audio_st->extra.pair_in_i = (int16_t*)malloc(frames * 2 * sizeof(int16_t));
+         if (int16_path)
+            audio_st->extra.pair_in_i = (int16_t*)malloc(frames * 2 * sizeof(int16_t));
+         else
+            audio_st->extra.pair_in = (float*)malloc(frames * 2 * sizeof(float));
       }
       audio_st->extra.cap_in = frames;
    }
@@ -681,8 +683,10 @@ static bool audio_driver_extra_prepare(audio_driver_state_t *audio_st,
       free(audio_st->extra.out_i);
       if (channels != 2)
       {
-         audio_st->extra.pair_out   = (float*)malloc(cap_out * 2 * sizeof(float));
-         audio_st->extra.pair_out_i = (int16_t*)malloc(cap_out * 2 * sizeof(int16_t));
+         if (int16_path)
+            audio_st->extra.pair_out_i = (int16_t*)malloc(cap_out * 2 * sizeof(int16_t));
+         else
+            audio_st->extra.pair_out = (float*)malloc(cap_out * 2 * sizeof(float));
       }
       audio_st->extra.out_f      = (float*)malloc(cap_out * channels * sizeof(float));
       audio_st->extra.out_i      = (int16_t*)malloc(cap_out * channels * sizeof(int16_t));
@@ -690,9 +694,9 @@ static bool audio_driver_extra_prepare(audio_driver_state_t *audio_st,
    }
    if (!audio_st->extra.in_f || !audio_st->extra.in_i
          || !audio_st->extra.out_f || !audio_st->extra.out_i
-         || (channels != 2 && (!audio_st->extra.pair_in
-            || !audio_st->extra.pair_out || !audio_st->extra.pair_in_i
-            || !audio_st->extra.pair_out_i)))
+         || (channels != 2 && (int16_path
+            ? (!audio_st->extra.pair_in_i || !audio_st->extra.pair_out_i)
+            : (!audio_st->extra.pair_in || !audio_st->extra.pair_out))))
    {
       audio_driver_extra_free(audio_st);
       return false;
