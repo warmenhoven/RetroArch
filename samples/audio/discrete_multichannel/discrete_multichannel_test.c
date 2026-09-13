@@ -1078,6 +1078,160 @@ static void layout_epoch_pressure_case(bool floating)
    config_get_ptr()->bools.audio_sync = sync;
 }
 
+static unsigned short_calls;
+static bool short_zero, short_no_room, short_fail;
+static ssize_t short_device_write(void *data, const void *buffer, size_t bytes)
+{
+   size_t limit = 31 * dev_channels * (dev_float ? sizeof(float) : sizeof(int16_t));
+   short_calls++;
+   if (short_fail) return -1;
+   if (short_zero) return 0;
+   if (bytes > limit) bytes = limit;
+   return dev_write(data, buffer, bytes);
+}
+
+static size_t short_device_wait(void *data, size_t bytes)
+{
+   size_t limit = 17 * dev_channels * (dev_float ? sizeof(float) : sizeof(int16_t));
+   (void)data;
+   if (short_no_room) return 0;
+   return bytes < limit ? bytes : limit;
+}
+
+static void pending_output_case(bool floating, bool stereo)
+{
+   union { float f[512 * 6]; int16_t i[512 * 6]; } input;
+   audio_driver_state_t *st = &audio_driver_st;
+   float *reference = NULL;
+   size_t reference_frames = 0, f;
+   unsigned partial, block, pass;
+   for (f = 0; f < 512 * 6; f++)
+   {
+      int16_t v = (int16_t)((int)((f * 7919) % 30000) - 15000);
+      if (floating) input.f[f] = v / 32768.0f;
+      else input.i[f] = v;
+   }
+   for (partial = 0; partial < 2; partial++)
+   {
+      bool ready = pipe_up(floating, floating);
+      CHECK(ready, "pending output stand-up");
+      if (!ready) { free(reference); return; }
+      if (stereo)
+      {
+         dev_layout = st->out_layout = AUDIO_LAYOUT_STEREO;
+         dev_channels = st->out_channels = 2;
+      }
+      if (partial)
+      {
+         scripted_threaded.write = short_device_write;
+         scripted_threaded.wait_writable = short_device_wait;
+      }
+      short_calls = 0;
+      short_zero = short_no_room = short_fail = false;
+      for (block = 0; block < 2; block++)
+      {
+         CHECK(audio_driver_multi_pipe(st, &input, 512, 6, AUDIO_LAYOUT_5POINT1, floating),
+               "pending source publish");
+         /* Finish old output before touching newly published source. */
+         for (pass = 0; pass < 128 && st->pipe_pending_bytes; pass++)
+         {
+            size_t held = retro_spsc_read_avail(&st->pipe_ring);
+            audio_driver_pipeline_consume(st);
+            CHECK(retro_spsc_read_avail(&st->pipe_ring) == held,
+                  "pending output let SRC overwrite owned scratch");
+         }
+         CHECK(!st->pipe_pending_bytes, "pending output did not progress");
+         audio_driver_pipeline_consume(st);
+         if (partial)
+         {
+            const uint8_t *pointer = st->pipe_pending;
+            size_t bytes = st->pipe_pending_bytes;
+            uint8_t *saved = (uint8_t*)malloc(bytes);
+            CHECK(bytes > 0 && saved != NULL, "short write was not retained");
+            if (saved && bytes) memcpy(saved, pointer, bytes);
+            short_no_room = true;
+            audio_driver_pipeline_consume(st);
+            short_no_room = false;
+            CHECK(st->pipe_pending == pointer && st->pipe_pending_bytes == bytes,
+                  "unwritable device changed pending ownership");
+            short_zero = true;
+            audio_driver_pipeline_consume(st);
+            short_zero = false;
+            CHECK(st->pipe_pending == pointer && st->pipe_pending_bytes == bytes,
+                  "zero write changed output ownership");
+            if (saved && bytes) CHECK(!memcmp(saved, pointer, bytes), "zero write changed pending samples");
+            free(saved);
+         }
+      }
+      for (pass = 0; pass < 128 && st->pipe_pending_bytes; pass++)
+         audio_driver_pipeline_consume(st);
+      CHECK(!st->pipe_pending_bytes && !retro_spsc_read_avail(&st->pipe_ring),
+            "pending output stranded at end of input");
+      CHECK(st->sink_accepted == cap_frames, "retry accounting lost or duplicated frames");
+      if (!partial)
+      {
+         reference_frames = cap_frames;
+         reference = (float*)malloc(cap_frames * dev_channels * sizeof(float));
+         CHECK(reference != NULL, "pending output reference allocation");
+         if (reference) memcpy(reference, cap, cap_frames * dev_channels * sizeof(float));
+      }
+      else
+      {
+         CHECK(short_calls > 2, "short write retries were not exercised");
+         CHECK(cap_frames == reference_frames, "short write output frame count differs");
+         if (reference && cap_frames == reference_frames)
+            CHECK(!memcmp(reference, cap, cap_frames * dev_channels * sizeof(float)),
+                  "short writes changed native device samples");
+      }
+   }
+   free(reference);
+}
+
+static void pending_lifecycle_case(bool floating)
+{
+   audio_driver_state_t *st = &audio_driver_st;
+   unsigned scenario;
+   bool sync = config_get_ptr()->bools.audio_sync;
+   for (scenario = 0; scenario < 4; scenario++)
+   {
+      bool ready = pipe_up(floating, floating);
+      CHECK(ready, "pending lifecycle stand-up");
+      if (!ready) return;
+      scripted_threaded.write = short_device_write;
+      short_zero = true;
+      short_no_room = short_fail = false;
+      memset(st->output_samples_buf, 0, 64 * 6 * sizeof(float));
+      {
+         ssize_t written = audio_driver_write_frames(st, st->current_audio,
+               st->output_samples_buf, 64, floating);
+         CHECK(written == 0, "pending lifecycle setup write");
+         audio_driver_retain_output(st, st->output_samples_buf, 64, written);
+      }
+      CHECK(st->pipe_pending_bytes > 0, "pending lifecycle setup ownership");
+      short_zero = false;
+      if (scenario == 0)
+         retro_atomic_store_release_int(&st->runloop_snapshot, AUDIO_SNAP_PAUSED);
+      else if (scenario == 1)
+         short_fail = true;
+      else if (scenario == 2)
+      {
+         config_get_ptr()->bools.audio_sync = false;
+         scripted_threaded.underruns = epoch_underrun;
+      }
+      else
+      {
+         CHECK(audio_driver_stop(), "pending stop failed");
+         CHECK(!st->pipe_pending && !st->pipe_pending_bytes, "stop retained stale output");
+         continue;
+      }
+      audio_driver_pipeline_consume(st);
+      CHECK(!st->pipe_pending && !st->pipe_pending_bytes, "pending output survived discontinuity");
+      CHECK(!cap_frames, "stale pending output reached device");
+   }
+   short_fail = false;
+   config_get_ptr()->bools.audio_sync = sync;
+}
+
 int main(void)
 {
    /* One case at a time, for when a single one is being worked on:
@@ -1089,6 +1243,12 @@ int main(void)
    RUN("suspended", suspended_multichannel_case(false, true));
    RUN("suspended", suspended_multichannel_case(true, false));
    RUN("suspended", suspended_multichannel_case(false, false));
+   RUN("pending", pending_lifecycle_case(false));
+   RUN("pending", pending_lifecycle_case(true));
+   RUN("pending", pending_output_case(false, false));
+   RUN("pending", pending_output_case(true, false));
+   RUN("pending", pending_output_case(false, true));
+   RUN("pending", pending_output_case(true, true));
    RUN("epoch", layout_epoch_pressure_case(false));
    RUN("epoch", layout_epoch_pressure_case(true));
    RUN("epoch", layout_epoch_case(false, false));

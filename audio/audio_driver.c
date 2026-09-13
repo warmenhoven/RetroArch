@@ -908,6 +908,9 @@ static bool audio_driver_deinit_internal(bool audio_enable)
       audio_st->context_audio_data = NULL;
    }
 
+   audio_st->pipe_pending = NULL;
+   audio_st->pipe_pending_bytes = 0;
+
    /* All scratch buffers live in the two arenas; the named pointers are
     * views into them. */
    if (audio_st->arena_int16)
@@ -1585,6 +1588,11 @@ static void audio_driver_sink_refused(audio_driver_state_t *audio_st)
    if (     (audio_st->sink_warned & AUDIO_SINK_WARNED_DROPPED)
          || !config_get_ptr()->bools.audio_sink_rate_estimation)
       return;
+   if (audio_st->pipe_pending_bytes)
+   {
+      size_t fb = audio_driver_dev_frame_bytes(audio_st);
+      accepted += (audio_st->pipe_pending_bytes + fb - 1) / fb;
+   }
    if (offered > 48000 * 30 && accepted < offered && (offered - accepted) * 1000 > offered)
    {
       audio_st->sink_warned |= AUDIO_SINK_WARNED_DROPPED;
@@ -2307,6 +2315,35 @@ static ssize_t audio_driver_write_frames(audio_driver_state_t *audio_st,
          frames * audio_st->out_channels * sizeof(int16_t));
 }
 
+/* The three software flush exits pass persistent stereo output scratch.
+ * Resolve the actual device buffer only when a threaded write was short. */
+static INLINE void audio_driver_retain_output(audio_driver_state_t *audio_st,
+      const void *stereo, size_t frames, ssize_t written)
+{
+   size_t bytes = frames * audio_driver_dev_frame_bytes(audio_st);
+   if (written >= 0 && (size_t)written < bytes && audio_st->pipe_threaded)
+   {
+      size_t sample = (AUDIO_FLAGS_GET(audio_st) & AUDIO_FLAG_USE_FLOAT)
+         ? sizeof(float) : sizeof(int16_t);
+      unsigned channels = 2;
+      const uint8_t *data = (const uint8_t*)stereo;
+      if ((audio_st->out_channels <= 2 && audio_st->virtualize && audio_st->virt_buf)
+            || (audio_st->out_channels > 2 && audio_st->upmix_buf))
+      {
+         if (frames > audio_st->upmix_frames) frames = audio_st->upmix_frames;
+         channels = audio_st->out_channels > 2 ? audio_st->out_channels : 2;
+         data = (AUDIO_FLAGS_GET(audio_st) & AUDIO_FLAG_USE_FLOAT)
+            ? (const uint8_t*)audio_st->upmix_buf : (const uint8_t*)audio_st->upmix_i16;
+      }
+      bytes = frames * channels * sample;
+      if ((size_t)written < bytes)
+      {
+         audio_st->pipe_pending = data + written;
+         audio_st->pipe_pending_bytes = bytes - written;
+      }
+   }
+}
+
 static void audio_driver_flush(audio_driver_state_t *audio_st,
       float slowmotion_ratio,
       const void *data, size_t samples, bool is_float,
@@ -2620,6 +2657,7 @@ static void audio_driver_flush(audio_driver_state_t *audio_st,
             {
                ssize_t w = audio_driver_write_frames(audio_st, audio,
                      audio_st->output_samples_buf, out_frames, true);
+               audio_driver_retain_output(audio_st, audio_st->output_samples_buf, out_frames, w);
                audio_st->sink_offered_raw += out_frames;
                if (!audio_st->pipe_threaded)
                   audio_st->sink_offered  += (double)out_frames * audio_st->src_ratio_orig / audio_st->src_ratio_curr;
@@ -2703,6 +2741,7 @@ static void audio_driver_flush(audio_driver_state_t *audio_st,
             {
                ssize_t w = audio_driver_write_frames(audio_st, audio,
                      audio_st->output_samples_int16, out_frames, false);
+               audio_driver_retain_output(audio_st, audio_st->output_samples_int16, out_frames, w);
                audio_st->sink_offered_raw += out_frames;
                if (!audio_st->pipe_threaded)
                   audio_st->sink_offered  += (double)out_frames * audio_st->src_ratio_orig / audio_st->src_ratio_curr;
@@ -3140,6 +3179,7 @@ static void audio_driver_flush(audio_driver_state_t *audio_st,
          ssize_t w  = audio_driver_write_frames(audio_st, audio, output_data,
                output_frames,
                (AUDIO_FLAGS_GET(audio_st) & AUDIO_FLAG_USE_FLOAT) != 0);
+         audio_driver_retain_output(audio_st, output_data, output_frames, w);
          audio_st->sink_offered_raw += (uint64_t)output_frames;
          if (!audio_st->pipe_threaded)
             audio_st->sink_offered  += (double)output_frames * audio_st->src_ratio_orig / audio_st->src_ratio_curr;
@@ -4256,6 +4296,60 @@ static void audio_driver_submit_width(audio_driver_state_t *audio_st,
 }
 
 #ifdef HAVE_THREADS
+/* Keep infrequent retries out of the steady-state consumer's code path. */
+#if defined(__GNUC__)
+__attribute__((noinline))
+#elif defined(_MSC_VER)
+__declspec(noinline)
+#endif
+static void audio_driver_pipeline_retry(audio_driver_state_t *audio_st)
+{
+   const audio_driver_t *audio = audio_st->current_audio;
+   int snap;
+   snap = retro_atomic_load_acquire_int(&audio_st->runloop_snapshot);
+   if ((snap & AUDIO_SNAP_PAUSED)
+         || !(AUDIO_FLAGS_GET(audio_st) & AUDIO_FLAG_ACTIVE)
+         || (audio->underruns && !config_get_ptr()->bools.audio_sync
+            && audio->underruns(audio_st->context_audio_data) != audio_st->pipe_underruns_seen))
+   {
+      audio_st->pipe_pending = NULL;
+      audio_st->pipe_pending_bytes = 0;
+      return;
+   }
+   else
+   {
+      size_t bytes = audio_st->pipe_pending_bytes;
+      size_t ready = audio->wait_writable(audio_st->context_audio_data, bytes);
+      ssize_t written;
+      if (!ready) return;
+      if (bytes > ready) bytes = ready;
+      audio_driver_state_lock();
+      written = audio->write(audio_st->context_audio_data, audio_st->pipe_pending, bytes);
+      if (written > 0 && (size_t)written <= bytes)
+      {
+         size_t fb = audio_driver_dev_frame_bytes(audio_st);
+         size_t before = (audio_st->pipe_pending_bytes + fb - 1) / fb;
+         audio_st->pipe_pending += written;
+         audio_st->pipe_pending_bytes -= written;
+         audio_st->sink_accepted += before
+            - (audio_st->pipe_pending_bytes + fb - 1) / fb;
+      }
+      else if (written < 0 || (size_t)written > bytes)
+         audio_st->pipe_pending_bytes = 0;
+      if (!audio_st->pipe_pending_bytes) audio_st->pipe_pending = NULL;
+      audio_driver_state_unlock();
+      if (!written)
+      {
+         /* A driver reporting room but accepting nothing must not spin. */
+         slock_lock(audio_st->pipe_lock);
+         if (!audio_st->pipe_wake)
+            scond_wait_timeout(audio_st->pipe_data_cond, audio_st->pipe_lock, 1000);
+         slock_unlock(audio_st->pipe_lock);
+      }
+      return;
+   }
+}
+
 /**
  * audio_driver_pipeline_consume:
  *
@@ -4272,6 +4366,12 @@ static void audio_driver_pipeline_consume(audio_driver_state_t *audio_st)
    double   out_ratio;
    size_t   frame_bytes, out_bytes, have;
    const audio_driver_t *audio = audio_st->current_audio;
+
+   if (audio_st->pipe_pending_bytes)
+   {
+      audio_driver_pipeline_retry(audio_st);
+      return;
+   }
 
    /* First wait: something to write. The producer signals after every
     * publish; the generation is read under the lock before the ring is
@@ -6316,6 +6416,9 @@ bool audio_driver_stop(void)
 
    if (stopped)
    {
+      /* The wrapper has parked the consumer before returning from stop. */
+      audio_st->pipe_pending = NULL;
+      audio_st->pipe_pending_bytes = 0;
       AUDIO_FLAGS_CLEAR(audio_st, AUDIO_FLAG_STARTED);
       RARCH_DBG("[Audio] Stopped audio driver \"%s\".\n", audio->ident);
    }

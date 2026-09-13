@@ -852,6 +852,9 @@ typedef struct
    float           *virt_buf;      /* frames * 6 floats, the virtual 5.1 */
    /* Keep existing hot audio fields together when adding transport state. */
    audio_pipeline_layout_t pipe_layouts;
+   /* Consumer-owned view into output scratch until a short write completes. */
+   const uint8_t *pipe_pending;
+   size_t pipe_pending_bytes;
 } audio_driver_state_t;
 
 bool audio_driver_enable_callback(void);
