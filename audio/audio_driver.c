@@ -4861,6 +4861,8 @@ size_t audio_driver_sample_batch_multi_int16(const int16_t *data, size_t frames,
       return audio_driver_sample_batch(data, frames);
    if (!frames)
       return 0;
+   if (AUDIO_FLAGS_GET(audio_st) & AUDIO_FLAG_SUSPENDED)
+      return frames;
    if (audio_driver_multi_discrete(audio_st, layout))
    {
       if (!audio_st->pipe_threaded)
@@ -4918,6 +4920,8 @@ size_t audio_driver_sample_batch_multi_float(const float *data, size_t frames,
       return audio_driver_sample_batch_float(data, frames);
    if (!frames)
       return 0;
+   if (AUDIO_FLAGS_GET(audio_st) & AUDIO_FLAG_SUSPENDED)
+      return frames;
    if (audio_driver_multi_discrete(audio_st, layout))
    {
       if (!audio_st->pipe_threaded)

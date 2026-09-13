@@ -763,6 +763,27 @@ static void bounded_canonical_case(bool floating)
    free(actual); free(input_f); free(input_i);
 }
 
+static void suspended_multichannel_case(bool floating, bool discrete)
+{
+   static float input_f[5000 * 6];
+   static int16_t input_i[5000 * 6];
+   audio_driver_state_t *st = &audio_driver_st;
+   const size_t frames = 5000;
+   size_t accepted;
+   CHECK(up(floating, discrete ? AUDIO_LAYOUT_5POINT1 : AUDIO_LAYOUT_STEREO, floating),
+         "suspended stand-up");
+   AUDIO_FLAGS_SET(st, AUDIO_FLAG_SUSPENDED);
+   accepted = floating
+      ? audio_driver_sample_batch_multi_float(input_f, frames, 6, AUDIO_LAYOUT_5POINT1)
+      : audio_driver_sample_batch_multi_int16(input_i, frames, 6, AUDIO_LAYOUT_5POINT1);
+   CHECK(accepted == frames, "suspended frames not accepted");
+   CHECK(!st->multi_fold && !st->multi_fold_frames, "suspended batch allocated fold staging");
+   CHECK(!st->extra.pending && !st->extra.channels, "suspended batch prepared extras");
+   CHECK(!cap_frames, "suspended batch reached device");
+   CHECK(st->core_layout == AUDIO_LAYOUT_5POINT1, "layout metadata was not retained");
+   AUDIO_FLAGS_CLEAR(st, AUDIO_FLAG_SUSPENDED);
+}
+
 int main(void)
 {
    /* One case at a time, for when a single one is being worked on:
@@ -770,6 +791,10 @@ int main(void)
    const char *only = getenv("DM_ONLY");
 #define RUN(tag, call) do { if (!only || strstr(only, tag)) { call; } } while (0)
    printf("discrete multi-channel:\n");
+   RUN("suspended", suspended_multichannel_case(true, true));
+   RUN("suspended", suspended_multichannel_case(false, true));
+   RUN("suspended", suspended_multichannel_case(true, false));
+   RUN("suspended", suspended_multichannel_case(false, false));
    RUN("canonical", bounded_canonical_case(true));
    RUN("canonical", bounded_canonical_case(false));
    RUN("large", large_inline_batch_case(true, false));
