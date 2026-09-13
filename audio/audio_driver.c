@@ -4535,11 +4535,7 @@ static void audio_driver_pipeline_consume(audio_driver_state_t *audio_st)
 }
 #endif
 
-/* A batch to the recorder, in the recorder's layout: as it is when
- * that is the batch's, remapped otherwise - a stereo batch on a 5.1
- * recording goes to the fronts, a 5.1 batch on a stereo one is
- * folded. The recorder takes int16; a float batch is narrowed once.
- * The remap buffer grows to the largest batch. */
+/* Recording keeps its native int16 bypass; conversion/remap uses one chunk. */
 static void audio_driver_record_push(audio_driver_state_t *audio_st,
       const void *data, size_t frames, unsigned channels, uint32_t layout, bool is_float)
 {
@@ -4547,37 +4543,49 @@ static void audio_driver_record_push(audio_driver_state_t *audio_st,
    struct record_audio_data ffemu_data;
    uint32_t rlayout   = record_st->layout ? record_st->layout : AUDIO_LAYOUT_STEREO;
    unsigned rchannels = record_st->channels ? record_st->channels : 2;
-   const int16_t *src = (const int16_t*)data;
-   size_t need        = frames * (channels > rchannels ? channels : rchannels);
+   size_t capacity, need;
    if (!record_st->data || !record_st->driver || !record_st->driver->push_audio)
       return;
-   if (is_float || rlayout != layout)
+   if (!is_float && rlayout == layout)
    {
-      if (need > audio_st->record_remap_frames)
+      ffemu_data.data   = data;
+      ffemu_data.frames = frames;
+      record_st->driver->push_audio(record_st->data, &ffemu_data);
+      return;
+   }
+   if (!frames) return;
+   capacity = frames > (AUDIO_CHUNK_SIZE_NONBLOCKING >> 1)
+      ? (AUDIO_CHUNK_SIZE_NONBLOCKING >> 1) : frames;
+   need = capacity * (channels > rchannels ? channels : rchannels);
+   if (need > audio_st->record_remap_frames)
+   {
+      int16_t *nb = (int16_t*)realloc(audio_st->record_remap, need * 2 * sizeof(int16_t));
+      if (!nb) return;
+      audio_st->record_remap        = nb;
+      audio_st->record_remap_frames = need;
+   }
+   while (frames)
+   {
+      size_t n = frames > capacity ? capacity : frames;
+      const int16_t *src = (const int16_t*)data;
+      if (is_float)
       {
-         int16_t *nb = (int16_t*)realloc(audio_st->record_remap, need * 2 * sizeof(int16_t));
-         if (!nb)
-            return;
-         audio_st->record_remap        = nb;
-         audio_st->record_remap_frames = need;
+         /* Separate halves keep conversion input out of the remap output. */
+         int16_t *n16 = audio_st->record_remap + need;
+         convert_float_to_s16(n16, (const float*)data, n * channels);
+         src = n16;
       }
+      if (rlayout != layout)
+      {
+         audio_layout_remap_s16(audio_st->record_remap, rlayout, src, layout, n);
+         src = audio_st->record_remap;
+      }
+      ffemu_data.data   = src;
+      ffemu_data.frames = n;
+      record_st->driver->push_audio(record_st->data, &ffemu_data);
+      data = (const uint8_t*)data + n * channels * (is_float ? sizeof(float) : sizeof(int16_t));
+      frames -= n;
    }
-   if (is_float)
-   {
-      /* narrowed into the second half of the remap buffer, so the
-       * remap below can read it and write the first */
-      int16_t *n16 = audio_st->record_remap + need;
-      convert_float_to_s16(n16, (const float*)data, frames * channels);
-      src = n16;
-   }
-   if (rlayout != layout)
-   {
-      audio_layout_remap_s16(audio_st->record_remap, rlayout, src, layout, frames);
-      src = audio_st->record_remap;
-   }
-   ffemu_data.data   = src;
-   ffemu_data.frames = frames;
-   record_st->driver->push_audio(record_st->data, &ffemu_data);
 }
 
 /**
