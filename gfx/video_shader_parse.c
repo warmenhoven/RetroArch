@@ -1126,11 +1126,12 @@ void video_shader_resolve_parameters(struct video_shader *shader)
          uint8_t *buf                 = NULL;
          int64_t buf_len              = 0;
 
-         if (!path || !*path || !path_is_valid(path))
+         if (!path || !*path)
             continue;
 
-         /* Read file contents */
-         if (filestream_read_file(path, (void**)&buf, &buf_len))
+         /* Through the same door the drivers use, so a source is
+          * fetched one way whoever wants it */
+         if (video_shader_source_read(path, (char**)&buf, &buf_len))
          {
             size_t line_index         = 0;
             struct string_list lines  = {0};
