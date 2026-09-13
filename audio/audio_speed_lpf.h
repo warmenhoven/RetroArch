@@ -44,6 +44,10 @@ bool audio_speed_lpf_set(audio_speed_lpf_t *state, bool enabled, double cutoff);
  * Fully dry calls leave every sample bit untouched and do not warm history.
  * Invalid arguments and zero-frame calls change nothing. */
 bool audio_speed_lpf_process(audio_speed_lpf_t *state, void *samples, size_t frames);
+/* Same operation into a separate aligned buffer, without an intermediate
+ * copy of wet samples. Source/destination must be identical or disjoint. */
+bool audio_speed_lpf_process_into(audio_speed_lpf_t *state,
+      const void *source, void *destination, size_t frames);
 bool audio_speed_lpf_quiescent(const audio_speed_lpf_t *state);
 /* Clear history, keep targets, and restart the engagement fade if enabled. */
 void audio_speed_lpf_reset(audio_speed_lpf_t *state);

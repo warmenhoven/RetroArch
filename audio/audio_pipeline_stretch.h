@@ -15,7 +15,7 @@ struct audio_pipeline_stretch_block
 {
    const void *data;
    size_t frames;
-   /* Source frames released immediately by WSOLA; direct views release their
+   /* Source frames released immediately by WSOLA/LPF; direct views release their
     * source only when acknowledged with consume(). */
    size_t input_used;
    unsigned layout;
@@ -30,7 +30,9 @@ struct audio_pipeline_stretch_block
  * buffer must not overlap ring storage. The producer
  * publishes whole native frames and preceding transport metadata. This stage
  * exclusively owns the ring tail and metadata retirement; do not read/skip
- * either queue elsewhere. No SRC, device pacing or format conversion here. */
+ * either queue elsewhere. Ordered cutoff metadata enables native filtering
+ * after transport, in the existing output buffer. Dry inactive blocks retain
+ * direct ring views. No SRC, device pacing or format conversion here. */
 audio_pipeline_stretch_t *audio_pipeline_stretch_new(unsigned rate,
       unsigned channels, bool is_float, uint32_t search_channels,
       retro_spsc_t *ring, audio_pipeline_layout_t *metadata,

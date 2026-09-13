@@ -229,12 +229,47 @@ static void reset_cases(void)
    }
 }
 
+static void separate_output(void)
+{
+   unsigned mode, j;
+   for (mode = 0; mode < 2; mode++)
+   {
+      audio_speed_lpf_t s, reference, old;
+      void *src = mode ? (void*)fa : (void*)ia;
+      void *dst = mode ? (void*)fb : (void*)ib;
+      size_t sample = mode ? sizeof(float) : sizeof(int16_t);
+      for (j = 0; j < N; j++)
+      { ia[j] = (j & 1) ? 32767 : -32768; fa[j] = ia[j] / 32768.0f; }
+      CHECK(audio_speed_lpf_init(&s, 48000, 1, mode != 0));
+      CHECK(audio_speed_lpf_set(&s, true, 1000));
+      reference = old = s;
+      CHECK(!audio_speed_lpf_process_into(&s, src, (char*)src + sample, 8));
+      CHECK(!audio_speed_lpf_process_into(&s, src, NULL, 8));
+      CHECK(memcmp(&s, &old, sizeof(s)) == 0);
+      CHECK(audio_speed_lpf_process_into(&s, src, dst, 6000));
+      CHECK(audio_speed_lpf_set(&s, false, 1000));
+      CHECK(audio_speed_lpf_process_into(&s, (char*)src + 6000*sample,
+               (char*)dst + 6000*sample, N-6000));
+      for (j = 0; j < N; j++)
+      {
+         int16_t x = (j & 1) ? 32767 : -32768;
+         float y = x / 32768.0f;
+         CHECK(mode ? fa[j] == y : ia[j] == x);
+         if (j == 6000) CHECK(audio_speed_lpf_set(&reference, false, 1000));
+         CHECK(audio_speed_lpf_process(&reference, mode ? (void*)&y : (void*)&x, 1));
+         CHECK(mode ? fb[j] == y : ib[j] == x);
+      }
+      CHECK(audio_speed_lpf_quiescent(&s));
+      cases++;
+   }
+}
+
 int main(void)
 {
    static const unsigned rates[] = {8000, 44100, 48000, 96000, 192000};
    unsigned r, c;
    guarded = 1;
-   contracts(); response(); reset_cases();
+   contracts(); response(); reset_cases(); separate_output();
    for (r = 0; r < sizeof(rates)/sizeof(rates[0]); r++)
       for (c = 1; c <= 11; c++) native_cases(rates[r], c);
    guarded = 0;

@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include "audio_pipeline_stretch.h"
 #include "audio_stretch.h"
+#include "audio_speed_lpf.h"
 
 struct audio_pipeline_stretch
 {
@@ -11,10 +12,13 @@ struct audio_pipeline_stretch
    retro_spsc_t *ring;
    audio_pipeline_layout_t *metadata;
    const uint8_t *direct;
+   void *output;
+   size_t output_frames, filtered;
+   audio_speed_lpf_t lpf;
    size_t direct_frames, offered, frame_bytes, sample_bytes;
    unsigned layout;
-   uint32_t seen_reset, reset_serial;
-   bool draining_layout;
+   uint32_t seen_reset, reset_serial, cutoff;
+   bool draining_layout, direct_source;
    union { float f[AUDIO_STRETCH_MAX_CHANNELS]; int16_t i[AUDIO_STRETCH_MAX_CHANNELS]; } wrap;
 };
 
@@ -38,6 +42,8 @@ audio_pipeline_stretch_t *audio_pipeline_stretch_new(unsigned rate,
       return NULL;
    }
    s->ring = ring; s->metadata = metadata;
+   s->output = output; s->output_frames = output_frames;
+   audio_speed_lpf_init(&s->lpf, rate, channels, is_float);
    s->frame_bytes = channels * sample; s->sample_bytes = sample;
    s->layout = metadata->current_layout; s->seen_reset = metadata->reset_serial;
    return s;
@@ -55,9 +61,18 @@ static void apstretch_offer(audio_pipeline_stretch_t *s,
       size_t frames, size_t budget)
 {
    if (frames > budget) frames = budget;
+   if (frames && !s->direct_frames && !s->filtered)
+   {
+      if (!audio_speed_lpf_quiescent(&s->lpf))
+         audio_speed_lpf_process(&s->lpf, (void*)data, frames);
+      s->filtered = frames;
+   }
+   /* A smaller retry budget must not expose an unfiltered suffix. */
+   if (!s->direct_frames && s->filtered && frames > s->filtered)
+      frames = s->filtered;
    block->data = frames ? data : NULL;
    block->frames = s->offered = frames;
-   block->passthrough = frames && s->direct_frames;
+   block->passthrough = frames && s->direct_frames && s->direct_source;
    block->layout = s->layout;
    block->reset_serial = s->reset_serial;
 }
@@ -100,6 +115,7 @@ bool audio_pipeline_stretch_next(audio_pipeline_stretch_t *s,
          return true;
       }
       audio_stretch_stream_reset(s->stream);
+      audio_speed_lpf_reset(&s->lpf);
       s->layout = s->metadata->current_layout;
       s->seen_reset = s->metadata->reset_serial;
       s->reset_serial++;
@@ -132,11 +148,19 @@ bool audio_pipeline_stretch_next(audio_pipeline_stretch_t *s,
          || s->seen_reset != s->metadata->reset_serial)
    {
       audio_stretch_stream_reset(s->stream);
+      audio_speed_lpf_reset(&s->lpf);
       s->layout = s->metadata->current_layout;
       s->seen_reset = s->metadata->reset_serial;
       s->reset_serial++;
    }
    frames = bytes / s->frame_bytes;
+   if (s->cutoff != s->metadata->current_cutoff)
+   {
+      uint32_t cutoff = s->metadata->current_cutoff;
+      audio_speed_lpf_set(&s->lpf, cutoff != 0,
+            cutoff ? cutoff : (s->cutoff ? s->cutoff : 20));
+      s->cutoff = cutoff;
+   }
    data = NULL;
    if (frames)
    {
@@ -161,6 +185,18 @@ bool audio_pipeline_stretch_next(audio_pipeline_stretch_t *s,
    if (!active && audio_stretch_stream_quiescent(s->stream))
    {
       if (frames > output_budget) frames = output_budget;
+      s->direct_source = true;
+      if (frames && !audio_speed_lpf_quiescent(&s->lpf))
+      {
+         if (frames > s->output_frames) frames = s->output_frames;
+         if (!audio_speed_lpf_process_into(&s->lpf, data, s->output, frames))
+            return false;
+         if (retro_spsc_skip(s->ring, frames * s->frame_bytes) != frames * s->frame_bytes)
+            return false;
+         block->input_used = frames;
+         data = s->output;
+         s->direct_source = false;
+      }
       s->direct = (const uint8_t*)data;
       s->direct_frames = frames;
       apstretch_offer(s, block, data, frames, output_budget);
@@ -184,10 +220,14 @@ bool audio_pipeline_stretch_consume(audio_pipeline_stretch_t *s, size_t frames)
    if (s->direct_frames)
    {
       size_t bytes = frames * s->frame_bytes;
-      if (retro_spsc_skip(s->ring, bytes) != bytes) return false;
+      if (s->direct_source && retro_spsc_skip(s->ring, bytes) != bytes) return false;
       s->direct += bytes; s->direct_frames -= frames;
    }
-   else if (!audio_stretch_stream_consume(s->stream, frames)) return false;
+   else
+   {
+      if (!audio_stretch_stream_consume(s->stream, frames)) return false;
+      s->filtered -= frames;
+   }
    s->offered -= frames;
    return true;
 }
@@ -205,6 +245,12 @@ bool audio_pipeline_stretch_finish(audio_pipeline_stretch_t *s,
    block->layout = s ? s->layout : 0;
    block->reset_serial = s ? s->reset_serial : 0;
    if (!s || retro_spsc_read_avail(s->ring)) return false;
+   if (s->direct_frames)
+   {
+      if (output_budget)
+         apstretch_offer(s, block, s->direct, s->direct_frames, output_budget);
+      return true;
+   }
    if (!audio_stretch_stream_finish_limit(s->stream, complete, output_budget))
       return false;
    if (!output_budget) return true;
@@ -219,6 +265,8 @@ bool audio_pipeline_stretch_discard(audio_pipeline_stretch_t *s, size_t frames)
    if (frames && retro_spsc_skip(s->ring, frames * s->frame_bytes) != frames * s->frame_bytes)
       return false;
    audio_stretch_stream_reset(s->stream);
+   audio_speed_lpf_reset(&s->lpf);
+   s->filtered = 0;
    s->direct = NULL; s->direct_frames = s->offered = 0;
    s->draining_layout = false;
    s->reset_serial++;

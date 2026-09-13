@@ -1,17 +1,23 @@
 # Native low-pass core
 
 Run `make check` (C89); `make check SANITIZER=address,undefined` enables
-sanitizers on supported toolchains. The 60 cases cover both native formats,
+sanitizers on supported toolchains. The 62 cases cover both native formats,
 all 1..11 channel widths at 8/44.1/48/96/192 kHz, chunk invariance with changing
 targets and reset, dry bit identity, invalid arguments, full-scale DC,
 silence decay, channel isolation, native-lane agreement and measured response.
 Allocator wrappers assert that initialization, controls, processing and reset
 make no heap calls.
 
-This is an independent caller-owned component, not an enabled playback mode.
-Future integration must own it on the audio processor, after transport and
-before SRC, supply core-rate cutoff Hz, and define the speed-to-cutoff policy.
-No playback settings or default pipeline calls are added here.
+The bounded transport stage owns this component after WSOLA and before SRC.
+Ordered metadata supplies core-rate cutoff Hz; zero disables filtering. Wet
+direct input is filtered into the existing stage output buffer in one pass;
+WSOLA output is filtered in place. Partial acknowledgements do not filter
+retained samples again. Dry inactive stages still return direct ring views.
+Playback activation, settings and speed-to-cutoff policy remain separate work.
+
+`audio_speed_lpf_process_into` also accepts disjoint source/output buffers.
+It preserves the source, rejects partial overlap, and matches in-place output
+including when a fade becomes dry within the block.
 
 Two cascaded real poles give a combined -3 dB cutoff. Each pole's coefficient
 stays between zero and one throughout interpolation. Float uses float history;

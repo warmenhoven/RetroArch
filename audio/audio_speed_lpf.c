@@ -85,11 +85,24 @@ static float speed_lpf_normal(float value)
 
 bool audio_speed_lpf_process(audio_speed_lpf_t *s, void *samples, size_t frames)
 {
-   size_t f, sample;
+   return audio_speed_lpf_process_into(s, samples, samples, frames);
+}
+
+bool audio_speed_lpf_process_into(audio_speed_lpf_t *s,
+      const void *source, void *samples, size_t frames)
+{
+   size_t f, sample, bytes;
    if (!s || !s->channels) return false;
    sample = s->is_float ? sizeof(float) : sizeof(int16_t);
-   if ((!samples && frames) || (uintptr_t)samples % sample
+   if ((!samples && frames) || (!source && frames)
+         || (uintptr_t)source % sample || (uintptr_t)samples % sample
          || frames > SIZE_MAX / (s->channels * sample)) return false;
+   bytes = frames * s->channels * sample;
+   if (source != samples)
+   {
+      uintptr_t a = (uintptr_t)source, b = (uintptr_t)samples;
+      if ((a > b ? a - b : b - a) < bytes) return false;
+   }
    for (f = 0; f < frames; f++)
    {
       unsigned c;
@@ -124,28 +137,30 @@ bool audio_speed_lpf_process(audio_speed_lpf_t *s, void *samples, size_t frames)
       if (s->is_float)
       {
          float *p = (float*)samples + f * s->channels;
+         const float *input = (const float*)source + f * s->channels;
          float mix = (float)s->wet / SPEED_LPF_WET;
          for (c = 0; c < s->channels; c++)
          {
-            float x = speed_lpf_normal(p[c]);
+            float x = speed_lpf_normal(input[c]);
             float a = s->primed ? s->history.f[0][c] : x;
             float b = s->primed ? s->history.f[1][c] : x;
             a = speed_lpf_normal(a + s->alpha_f * (x - a));
             b = speed_lpf_normal(b + s->alpha_f * (a - b));
             s->history.f[0][c] = a; s->history.f[1][c] = b;
-            if (s->wet) p[c] = s->wet == SPEED_LPF_WET ? b : p[c] + mix * (b - p[c]);
+            p[c] = s->wet == SPEED_LPF_WET ? b : input[c] + mix * (b - input[c]);
          }
       }
       else
       {
          int16_t *p = (int16_t*)samples + f * s->channels;
+         const int16_t *input = (const int16_t*)source + f * s->channels;
          for (c = 0; c < s->channels; c++)
          {
             /* Q16 states stay within the native input extrema. The largest
              * difference is below 2^32; with a Q30 pole below one, every
              * product fits signed 64 bits. Convex updates also bound output,
              * so the native lane needs neither clipping nor float storage. */
-            int64_t x = (int64_t)p[c] * SPEED_LPF_WET;
+            int64_t x = (int64_t)input[c] * SPEED_LPF_WET;
             int64_t a = s->primed ? s->history.i[0][c] : x;
             int64_t b = s->primed ? s->history.i[1][c] : x;
             a += speed_lpf_round((x - a) * s->alpha, SPEED_LPF_ONE);
@@ -160,6 +175,12 @@ bool audio_speed_lpf_process(audio_speed_lpf_t *s, void *samples, size_t frames)
          }
       }
       s->primed = true;
+   }
+   if (source != samples && f < frames)
+   {
+      size_t offset = f * s->channels * sample;
+      memcpy((uint8_t*)samples + offset, (const uint8_t*)source + offset,
+            bytes - offset);
    }
    return true;
 }
