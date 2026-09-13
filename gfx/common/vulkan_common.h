@@ -219,6 +219,12 @@ typedef struct vulkan_context
    VkPhysicalDeviceMemoryProperties memory_properties;
 
    VkPresentModeKHR present_modes[16];
+   /* Whether the surface offers FIFO_RELAXED, which is what the
+    * context drivers answer GFX_CTX_FLAGS_ADAPTIVE_VSYNC from. Settled
+    * where the swapchain is created and read through an acquire: the
+    * array above is rewritten by the thread that draws, while the main
+    * thread is the one asking. */
+   retro_atomic_int_t supports_adaptive_vsync;
    VkImage swapchain_images[VULKAN_MAX_SWAPCHAIN_IMAGES];
    VkFence swapchain_fences[VULKAN_MAX_SWAPCHAIN_IMAGES];
    VkFormat swapchain_format;

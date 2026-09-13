@@ -2251,6 +2251,21 @@ bool vulkan_create_swapchain(gfx_ctx_vulkan_data_t *vk,
    for (i = 0; i < present_mode_count; i++)
       vk->context.present_modes[i] = present_modes[i];
 
+   /* Settled here, for whoever asks the context for its flags */
+   {
+      int relaxed = 0;
+      for (i = 0; i < present_mode_count; i++)
+      {
+         if (present_modes[i] == VK_PRESENT_MODE_FIFO_RELAXED_KHR)
+         {
+            relaxed = 1;
+            break;
+         }
+      }
+      retro_atomic_store_release_int(
+            &vk->context.supports_adaptive_vsync, relaxed);
+   }
+
    /* Prefer IMMEDIATE without vsync */
    for (i = 0; i < present_mode_count; i++)
    {
