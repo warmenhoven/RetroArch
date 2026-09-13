@@ -255,6 +255,21 @@ struct vk_draw_triangles
    unsigned vertices;
 };
 
+/* Batched descriptor writes; defined here because vk_t holds one. */
+#define VK_DESC_BATCH_MAX_WRITES  64
+#define VK_DESC_BATCH_MAX_BUFFERS 32
+#define VK_DESC_BATCH_MAX_IMAGES  32
+
+struct vk_descriptor_batch
+{
+   VkWriteDescriptorSet    writes[VK_DESC_BATCH_MAX_WRITES];
+   VkDescriptorBufferInfo  buffer_infos[VK_DESC_BATCH_MAX_BUFFERS];
+   VkDescriptorImageInfo   image_infos[VK_DESC_BATCH_MAX_IMAGES];
+   unsigned write_count;
+   unsigned buffer_count;
+   unsigned image_count;
+};
+
 typedef struct vk
 {
    vulkan_filter_chain_t *filter_chain;
@@ -340,6 +355,15 @@ typedef struct vk
       struct vk_texture *images;
       struct vk_vertex *vertex;
       unsigned count;
+      /* What a batch of overlays is staged into before it is written and
+       * drawn. Here rather than on the stack of the function that fills
+       * it: the batch alone is better than four kilobytes, and a frame
+       * that size is past what this tree allows. Overlays are drawn
+       * from the thread that draws, one batch at a time. */
+      struct vk_buffer_range     ubo_ranges[16];
+      struct vk_buffer_range     vbo_ranges[16];
+      VkDescriptorSet            sets[16];
+      struct vk_descriptor_batch batch;
    } overlay;
 
    struct
@@ -770,19 +794,6 @@ static void vulkan_write_quad_descriptors(
  * stage writes into a batch and flush once. This reduces Vulkan
  * driver overhead when issuing many draws with different descriptors
  * (e.g. overlay rendering, menu display draws). */
-#define VK_DESC_BATCH_MAX_WRITES  64
-#define VK_DESC_BATCH_MAX_BUFFERS 32
-#define VK_DESC_BATCH_MAX_IMAGES  32
-
-struct vk_descriptor_batch
-{
-   VkWriteDescriptorSet    writes[VK_DESC_BATCH_MAX_WRITES];
-   VkDescriptorBufferInfo  buffer_infos[VK_DESC_BATCH_MAX_BUFFERS];
-   VkDescriptorImageInfo   image_infos[VK_DESC_BATCH_MAX_IMAGES];
-   unsigned write_count;
-   unsigned buffer_count;
-   unsigned image_count;
-};
 
 static INLINE void vulkan_descriptor_batch_init(
       struct vk_descriptor_batch *batch)
@@ -10135,17 +10146,16 @@ static void vulkan_render_overlay(vk_t *vk, unsigned width,
       while (base < total)
       {
          int batch_count = total - base;
-         /* Stack-allocate for typical overlay counts; these are small structs. */
-         struct vk_buffer_range  ubo_ranges[16];
-         struct vk_buffer_range  vbo_ranges[16];
-         VkDescriptorSet         sets[16];
-         struct vk_descriptor_batch batch;
+         struct vk_buffer_range     *ubo_ranges = vk->overlay.ubo_ranges;
+         struct vk_buffer_range     *vbo_ranges = vk->overlay.vbo_ranges;
+         VkDescriptorSet            *sets       = vk->overlay.sets;
+         struct vk_descriptor_batch *batch      = &vk->overlay.batch;
 
          /* Clamp this batch to stack array size */
          if (batch_count > 16)
             batch_count = 16;
 
-         vulkan_descriptor_batch_init(&batch);
+         vulkan_descriptor_batch_init(batch);
 
          /* Phase 1: Allocate UBOs, descriptor sets, VBOs and stage writes. */
          for (i = 0; i < batch_count; i++)
@@ -10165,7 +10175,7 @@ static void vulkan_render_overlay(vk_t *vk, unsigned width,
                   vk->context->device,
                   &vk->chain->descriptor_manager);
 
-            if (!vulkan_descriptor_batch_add(&batch, sets[i],
+            if (!vulkan_descriptor_batch_add(batch, sets[i],
                      ubo_ranges[i].buffer,
                      ubo_ranges[i].offset,
                      sizeof(vk->mvp),
@@ -10174,8 +10184,8 @@ static void vulkan_render_overlay(vk_t *vk, unsigned width,
                         ? vk->samplers.mipmap_linear : vk->samplers.linear))
             {
                /* Batch full — flush what we have and add again. */
-               vulkan_descriptor_batch_flush(vk->context->device, &batch);
-               vulkan_descriptor_batch_add(&batch, sets[i],
+               vulkan_descriptor_batch_flush(vk->context->device, batch);
+               vulkan_descriptor_batch_add(batch, sets[i],
                      ubo_ranges[i].buffer,
                      ubo_ranges[i].offset,
                      sizeof(vk->mvp),
@@ -10196,7 +10206,7 @@ static void vulkan_render_overlay(vk_t *vk, unsigned width,
          }
 
          /* Single batched flush for this batch of overlay descriptors. */
-         vulkan_descriptor_batch_flush(vk->context->device, &batch);
+         vulkan_descriptor_batch_flush(vk->context->device, batch);
 
          /* Phase 2: Issue draw commands using pre-allocated resources. */
          for (i = 0; i < batch_count; i++)
