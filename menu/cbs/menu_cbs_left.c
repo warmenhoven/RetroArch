@@ -352,11 +352,16 @@ static int action_left_shader_num_passes(unsigned type, const char *label,
       return -1;
 
    if (pass_count > 0)
+   {
       shader->passes--;
+      /* Every pass's source is read to find its parameters, so it is
+       * done when the count moved and not when it could not - held at
+       * zero, this ran once a keypress. */
+      video_shader_resolve_parameters(shader);
+   }
 
    menu_st->flags     |= MENU_ST_FLAG_ENTRIES_NEED_REFRESH
                        | MENU_ST_FLAG_PREVENT_POPULATE;
-   video_shader_resolve_parameters(shader);
 
    shader->flags                        |= SHDR_FLAG_MODIFIED;
 

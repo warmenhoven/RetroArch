@@ -383,11 +383,16 @@ static int action_right_shader_num_passes(unsigned type, const char *label,
       return -1;
 
    if (pass_count < GFX_MAX_SHADERS)
+   {
       shader->passes++;
+      /* Every pass's source is read to find its parameters, so it is
+       * done when the count moved and not when it could not - held at
+       * the limit, this was a read of each of them a keypress. */
+      video_shader_resolve_parameters(shader);
+   }
 
    menu_st->flags          |=  MENU_ST_FLAG_PREVENT_POPULATE
                             |  MENU_ST_FLAG_ENTRIES_NEED_REFRESH;
-   video_shader_resolve_parameters(shader);
 
    shader->flags           |= SHDR_FLAG_MODIFIED;
 
