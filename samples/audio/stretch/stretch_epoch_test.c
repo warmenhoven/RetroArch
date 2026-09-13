@@ -9,7 +9,8 @@ static bool epoch_reset(unsigned stage) { return stage % 4 == 0 || stage == 5; }
 static uint32_t epoch_control(unsigned stage)
 {
    return stage % 4 == 1 ? AUDIO_PIPELINE_STRETCH | 90112
-      : stage % 4 == 2 ? AUDIO_PIPELINE_STRETCH | 262144 : 65536;
+      : stage % 4 == 2 ? AUDIO_PIPELINE_STRETCH
+         | (stage < 4 ? 262144 : stage < 8 ? 2097152 : 16384) : 65536;
 }
 static unsigned epoch_layout(unsigned stage, unsigned channels)
 {
@@ -28,7 +29,7 @@ static size_t epoch_run(unsigned channels, unsigned native, double ratio,
    const char *source = native ? (const char*)input_f : (const char*)input_i;
    size_t used = 0, published = 0, count, taken, iterations = 0;
    size_t origin = SIZE_MAX - 127;
-   unsigned previous = (unsigned)-1;
+   unsigned previous = (unsigned)-1, last_layout = 3;
    uint32_t serial = 0;
    bool complete = false;
    CHECK(stream != NULL);
@@ -46,7 +47,7 @@ static size_t epoch_run(unsigned channels, unsigned native, double ratio,
       unsigned stage = (unsigned)(used / 512);
       uint32_t control = epoch_control(stage);
       const void *view;
-      bool reset = false;
+      bool reset = false, layout_changed;
       if (++iterations > 100000) abort();
       if (queued)
          while (published < FRAMES)
@@ -95,6 +96,7 @@ static size_t epoch_run(unsigned channels, unsigned native, double ratio,
          control = epochs.current_control;
          reset = serial != epochs.reset_serial;
          serial = epochs.reset_serial;
+         previous = stage;
       }
       else if (previous != stage)
       {
@@ -104,7 +106,24 @@ static size_t epoch_run(unsigned channels, unsigned native, double ratio,
             if (epoch_reset(k)) reset = true;
          previous = stage;
       }
-      if (reset)
+      layout_changed = last_layout != epoch_layout(stage, channels);
+      last_layout = epoch_layout(stage, channels);
+      if (layout_changed && !reset)
+      {
+         bool drained = false;
+         while (!drained)
+         {
+            CHECK(audio_stretch_stream_finish_limit(stream, &drained, 13));
+            view = audio_stretch_stream_peek(stream, &count);
+            if (count)
+            {
+               if (count > 7) count = 7;
+               chain_accept(view, count);
+               CHECK(audio_stretch_stream_consume(stream, count));
+            }
+         }
+      }
+      if (reset || layout_changed)
       {
          unsigned pair;
          audio_stretch_stream_reset(stream);
@@ -141,6 +160,7 @@ static size_t epoch_run(unsigned channels, unsigned native, double ratio,
    return chain_free();
 }
 
+#ifndef STRETCH_EPOCH_EMBEDDED
 int main(void)
 {
    unsigned channels, native, hq, cap, discard, ratio, cases = 0;
@@ -164,3 +184,5 @@ int main(void)
    printf("queued stretch + sinc: %u cases, %u failures, %u guarded heap calls\n", cases, failures, heap_calls);
    return failures != 0;
 }
+
+#endif
