@@ -1190,7 +1190,7 @@ void video_shader_resolve_parameters(struct video_shader *shader)
           * it should be the same implementation, but supporting
           * #include directives */
          slang_preprocess_parse_parameters_cached(path, shader,
-               include_cache);
+               (unsigned)i, include_cache);
       }
 
       glslang_include_cache_free(include_cache);

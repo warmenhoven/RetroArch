@@ -1307,7 +1307,7 @@ error:
 }
 
 bool slang_preprocess_parse_parameters_meta(const glslang_meta *meta,
-      struct video_shader *shader)
+      struct video_shader *shader, unsigned pass)
 {
    unsigned i;
    unsigned old_num_parameters = shader->num_parameters;
@@ -1365,6 +1365,9 @@ bool slang_preprocess_parse_parameters_meta(const glslang_meta *meta,
          &shader->parameters[shader->num_parameters++]))
          continue;
 
+      /* The pass that first declares a parameter owns it: a later pass
+       * naming the same id takes the branch above and adds nothing. */
+      p->pass    = (int)pass;
       strlcpy(p->id,   meta->parameters[i].id,   sizeof(p->id));
       strlcpy(p->desc, meta->parameters[i].desc, sizeof(p->desc));
       p->initial = meta->parameters[i].initial;
@@ -1381,14 +1384,14 @@ bool slang_preprocess_parse_parameters_meta(const glslang_meta *meta,
  * slang_preprocess_parse_parameters (C-linkage overload) — uses shader_line_buf
  * ----------------------------------------------------------------------- */
 bool slang_preprocess_parse_parameters(const char *shader_path,
-      struct video_shader *shader)
+      struct video_shader *shader, unsigned pass)
 {
    return slang_preprocess_parse_parameters_cached(shader_path, shader,
-         NULL);
+         pass, NULL);
 }
 
 bool slang_preprocess_parse_parameters_cached(const char *shader_path,
-      struct video_shader *shader, void *include_cache)
+      struct video_shader *shader, unsigned pass, void *include_cache)
 {
    struct shader_line_buf lines;
 
@@ -1404,7 +1407,8 @@ bool slang_preprocess_parse_parameters_cached(const char *shader_path,
          meta.rt_format = SLANG_FORMAT_UNKNOWN;
          if (glslang_parse_meta(&lines, &meta))
          {
-            bool ret = slang_preprocess_parse_parameters_meta(&meta, shader);
+            bool ret = slang_preprocess_parse_parameters_meta(&meta, shader,
+                  pass);
             free(meta.parameters);
             shader_line_buf_free(&lines);
             return ret;
@@ -1445,7 +1449,8 @@ bool slang_process(
    if (!glslang_compile_shader(pass->source.path, &output))
       return false;
 
-   if (!slang_preprocess_parse_parameters_meta(&output.meta, shader_info))
+   if (!slang_preprocess_parse_parameters_meta(&output.meta, shader_info,
+            pass_number))
    {
       glslang_output_free(&output);
       return false;

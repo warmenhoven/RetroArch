@@ -328,16 +328,18 @@ bool glslang_compile_shader_cached(const char *shader_path,
       glslang_output *output, void *include_cache);
 
 /* Merge parameters harvested into @meta into @shader, enforcing the
- * duplicate-must-match rule.  (Formerly a C++ overload of
- * slang_preprocess_parse_parameters.) */
+ * duplicate-must-match rule.  @pass is the pass @meta was harvested
+ * from, and is recorded on each parameter this call adds, so that a
+ * parameter is owned by the first pass declaring it.  (Formerly a C++
+ * overload of slang_preprocess_parse_parameters.) */
 bool slang_preprocess_parse_parameters_meta(const glslang_meta *meta,
-      struct video_shader *shader);
+      struct video_shader *shader, unsigned pass);
 
 /* Utility function to implement the same parameter reflection
  * which happens in the slang backend.
  * This does preprocess over the input file to handle #includes and so on. */
 bool slang_preprocess_parse_parameters(const char *shader_path,
-      struct video_shader *shader);
+      struct video_shader *shader, unsigned pass);
 
 /* As slang_preprocess_parse_parameters(), but expands '#include'
  * directives through @include_cache (see glslang_include_cache_new).
@@ -345,7 +347,7 @@ bool slang_preprocess_parse_parameters(const char *shader_path,
  * share helper files, so one cache across that walk avoids re-reading
  * them per pass.  A NULL cache behaves exactly like the uncached call. */
 bool slang_preprocess_parse_parameters_cached(const char *shader_path,
-      struct video_shader *shader, void *include_cache);
+      struct video_shader *shader, unsigned pass, void *include_cache);
 
 /* Name-map lifecycle.  set_unique appends name -> (semantic, index);
  * it fails on a duplicate name, an over-long name, or allocation
