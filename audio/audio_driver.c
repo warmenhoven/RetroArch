@@ -4852,28 +4852,42 @@ size_t audio_driver_sample_batch_multi_int16(const int16_t *data, size_t frames,
       unsigned channels, unsigned layout)
 {
    audio_driver_state_t *audio_st = &audio_driver_st;
-   size_t n;
    if (!data || !audio_driver_multi_layout_ok(channels, layout))
       return 0;
    audio_st->core_layout = layout;
    if (layout == AUDIO_LAYOUT_STEREO)
       return audio_driver_sample_batch(data, frames);
-   if (!frames || !audio_driver_multi_fold_room(audio_st, frames, sizeof(int16_t)))
+   if (!frames)
       return 0;
    if (audio_driver_multi_discrete(audio_st, layout))
    {
-      if (audio_st->pipe_threaded)
+      if (!audio_st->pipe_threaded)
       {
-         if (audio_driver_multi_pipe(audio_st, data, frames, channels, layout, false))
-            return frames;
+         size_t done = 0;
+         while (done < frames)
+         {
+            size_t n = frames - done, taken;
+            if (n > (AUDIO_CHUNK_SIZE_NONBLOCKING >> 1))
+               n = AUDIO_CHUNK_SIZE_NONBLOCKING >> 1;
+            if (!audio_driver_multi_fold_room(audio_st, n, sizeof(int16_t)))
+               return done;
+            /* Extras are consumed by one stereo flush, not a whole batch. */
+            if (!audio_driver_multi_split_s16(audio_st, data + done * channels,
+                     n, channels, layout))
+               audio_downmix_s16((int16_t*)audio_st->multi_fold,
+                     data + done * channels, n, layout, channels);
+            taken = audio_driver_sample_batch((const int16_t*)audio_st->multi_fold, n);
+            audio_st->extra.pending = false;
+            done += taken;
+            if (taken < n) break;
+         }
+         return done;
       }
-      else if (audio_driver_multi_split_s16(audio_st, data, frames, channels, layout))
-      {
-         n = audio_driver_sample_batch((const int16_t*)audio_st->multi_fold, frames);
-         audio_st->extra.pending = false;
-         return n;
-      }
+      if (audio_driver_multi_pipe(audio_st, data, frames, channels, layout, false))
+         return frames;
    }
+   if (!audio_driver_multi_fold_room(audio_st, frames, sizeof(int16_t)))
+      return 0;
    audio_downmix_s16((int16_t*)audio_st->multi_fold, data, frames, layout, channels);
    return audio_driver_sample_batch((const int16_t*)audio_st->multi_fold, frames);
 }
@@ -4882,28 +4896,42 @@ size_t audio_driver_sample_batch_multi_float(const float *data, size_t frames,
       unsigned channels, unsigned layout)
 {
    audio_driver_state_t *audio_st = &audio_driver_st;
-   size_t n;
    if (!data || !audio_driver_multi_layout_ok(channels, layout))
       return 0;
    audio_st->core_layout = layout;
    if (layout == AUDIO_LAYOUT_STEREO)
       return audio_driver_sample_batch_float(data, frames);
-   if (!frames || !audio_driver_multi_fold_room(audio_st, frames, sizeof(float)))
+   if (!frames)
       return 0;
    if (audio_driver_multi_discrete(audio_st, layout))
    {
-      if (audio_st->pipe_threaded)
+      if (!audio_st->pipe_threaded)
       {
-         if (audio_driver_multi_pipe(audio_st, data, frames, channels, layout, true))
-            return frames;
+         size_t done = 0;
+         while (done < frames)
+         {
+            size_t n = frames - done, taken;
+            if (n > (AUDIO_CHUNK_SIZE_NONBLOCKING >> 1))
+               n = AUDIO_CHUNK_SIZE_NONBLOCKING >> 1;
+            if (!audio_driver_multi_fold_room(audio_st, n, sizeof(float)))
+               return done;
+            /* Extras are consumed by one stereo flush, not a whole batch. */
+            if (!audio_driver_multi_split_f32(audio_st, data + done * channels,
+                     n, channels, layout))
+               audio_downmix_f32((float*)audio_st->multi_fold,
+                     data + done * channels, n, layout, channels);
+            taken = audio_driver_sample_batch_float((const float*)audio_st->multi_fold, n);
+            audio_st->extra.pending = false;
+            done += taken;
+            if (taken < n) break;
+         }
+         return done;
       }
-      else if (audio_driver_multi_split_f32(audio_st, data, frames, channels, layout))
-      {
-         n = audio_driver_sample_batch_float((const float*)audio_st->multi_fold, frames);
-         audio_st->extra.pending = false;
-         return n;
-      }
+      if (audio_driver_multi_pipe(audio_st, data, frames, channels, layout, true))
+         return frames;
    }
+   if (!audio_driver_multi_fold_room(audio_st, frames, sizeof(float)))
+      return 0;
    audio_downmix_f32((float*)audio_st->multi_fold, data, frames, layout, channels);
    return audio_driver_sample_batch_float((const float*)audio_st->multi_fold, frames);
 }

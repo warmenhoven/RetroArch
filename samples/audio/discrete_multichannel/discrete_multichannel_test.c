@@ -689,6 +689,41 @@ static void fold_case(void)
    free(inf);
 }
 
+static void large_inline_batch_case(bool floating)
+{
+   const size_t chunk = AUDIO_CHUNK_SIZE_NONBLOCKING >> 1;
+   const size_t frames = 3 * chunk + 17;
+   float *input_f = (float*)malloc(frames * 6 * sizeof(float));
+   int16_t *input_i = (int16_t*)malloc(frames * 6 * sizeof(int16_t));
+   float *expected;
+   size_t f, made, n; unsigned c;
+   for (f = 0; f < frames; f++)
+      for (c = 0; c < 6; c++)
+      {
+         input_f[f * 6 + c] = 0.3f * (float)sin(2 * M_PI * tone_hz[c] * f / 44100.0);
+         input_i[f * 6 + c] = (int16_t)(input_f[f * 6 + c] * 32767);
+      }
+   CHECK(up(floating, AUDIO_LAYOUT_5POINT1, floating), "large batch stand-up");
+   n = floating ? audio_driver_sample_batch_multi_float(input_f, frames, 6, AUDIO_LAYOUT_5POINT1)
+      : audio_driver_sample_batch_multi_int16(input_i, frames, 6, AUDIO_LAYOUT_5POINT1);
+   CHECK(n == frames, "large batch consumption");
+   CHECK(audio_driver_st.multi_fold_frames <= chunk, "front staging exceeded one chunk");
+   made = cap_frames;
+   expected = (float*)malloc(made * 6 * sizeof(float));
+   memcpy(expected, cap, made * 6 * sizeof(float));
+   CHECK(up(floating, AUDIO_LAYOUT_5POINT1, floating), "fragmented stand-up");
+   for (f = 0; f < frames; f += n)
+   {
+      n = frames - f > chunk ? chunk : frames - f;
+      if (floating) audio_driver_sample_batch_multi_float(input_f + f * 6, n, 6, AUDIO_LAYOUT_5POINT1);
+      else audio_driver_sample_batch_multi_int16(input_i + f * 6, n, 6, AUDIO_LAYOUT_5POINT1);
+   }
+   CHECK(made == cap_frames, "large/fragmented frame counts differ");
+   CHECK(made == cap_frames && !memcmp(expected, cap, made * 6 * sizeof(float)),
+         "large batch lost or shifted discrete channels after the first chunk");
+   free(expected); free(input_f); free(input_i);
+}
+
 int main(void)
 {
    /* One case at a time, for when a single one is being worked on:
@@ -696,6 +731,8 @@ int main(void)
    const char *only = getenv("DM_ONLY");
 #define RUN(tag, call) do { if (!only || strstr(only, tag)) { call; } } while (0)
    printf("discrete multi-channel:\n");
+   RUN("large", large_inline_batch_case(true));
+   RUN("large", large_inline_batch_case(false));
    RUN("discrete", discrete_case(true, true));
    RUN("discrete", discrete_case(false, false));
    RUN("discrete", discrete_case(false, true));
