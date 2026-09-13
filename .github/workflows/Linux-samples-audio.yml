@@ -806,7 +806,7 @@ jobs:
                obj-unix/release/audio/common/alsa.o
           echo "[pass] both drivers in the one object, through configure"
 
-      - name: Build and run bounded stretch engine (C89, ASan + UBSan)
+      - name: Build and run stretch and native SRC chain (C89, ASan + UBSan)
         working-directory: samples/audio/stretch
         run: |
           make check SANITIZER=address,undefined

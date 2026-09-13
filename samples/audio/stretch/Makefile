@@ -9,11 +9,14 @@ CFLAGS += -fsanitize=$(SANITIZER) -fno-omit-frame-pointer -g
 LDFLAGS += -fsanitize=$(SANITIZER)
 endif
 SOURCES = stretch_test.c $(ROOT)/audio/audio_stretch.c
-all: stretch_test
+all: stretch_test stretch_src_test
 stretch_test: $(SOURCES) $(ROOT)/audio/audio_stretch.h $(ROOT)/libretro-common/include/audio/wsola_search.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(SOURCES) $(LDFLAGS) $(LDLIBS) -o $@
-check: stretch_test
+stretch_src_test: stretch_src_test.c $(SOURCES) $(ROOT)/libretro-common/audio/resampler/drivers/sinc_resampler.c $(ROOT)/libretro-common/audio/resampler/drivers/sinc_resampler_int16.c $(ROOT)/libretro-common/memmap/memalign.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) stretch_src_test.c $(ROOT)/audio/audio_stretch.c $(ROOT)/libretro-common/audio/resampler/drivers/sinc_resampler.c $(ROOT)/libretro-common/audio/resampler/drivers/sinc_resampler_int16.c $(ROOT)/libretro-common/memmap/memalign.c $(LDFLAGS) $(LDLIBS) -o $@
+check: stretch_test stretch_src_test
 	./stretch_test
+	./stretch_src_test
 clean:
-	rm -f stretch_test stretch_test.exe
+	rm -f stretch_test stretch_test.exe stretch_src_test stretch_src_test.exe
 .PHONY: all check clean

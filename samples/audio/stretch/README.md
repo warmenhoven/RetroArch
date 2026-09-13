@@ -183,3 +183,21 @@ call's consumption, production and native samples against the engine across
 small output capacities and changing tempos. Drain/exit still supplies at least
 the engine's final overlap before its possible source-gap boundary, so the
 transition owner can retain the necessary outgoing tail during exit alone.
+
+## Real SRC chain integration
+
+`stretch_src_test` links the actual stretch adapter and float/int16 sinc
+implementations. It compares a batch-reference chain with fragmented bound
+output, partial source acknowledgements and short simulated sink accepts.
+Coverage includes stereo/eight channels, ratios 0.75/2/4, HQ off/on (including
+below-threshold fallback), and ratio changes at fixed stretched-frame positions.
+Each stereo pair must produce equal frame counts. A conservative 128-frame
+output budget limits source submissions, and canaries check writes beyond the
+reported native SRC output. Allocation wrappers cover guarded processing.
+
+The fixture uses native pair staging and does not link conversion routines.
+It is not the frontend's channel-routing implementation or a real device test.
+The simulated sink fully accepts each prepared output block before upstream
+processing resumes. This establishes the intended ownership order, not driver
+short-write behavior. Linux's existing stretch ASan/UBSan job runs both suites;
+local sanitizer/device acceptance and frontend wiring remain outstanding.
