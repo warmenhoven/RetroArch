@@ -792,6 +792,7 @@ typedef struct
     * Used to re-initialise the resampler on the transition back to actual
     * resampling so it does not resume from a stale ring buffer. */
    bool     resampler_bypassed;
+   bool     resampler_hq; /* resolved software HQ policy for this audio instance */
 
    /* The layout the device was opened with - AUDIO_LAYOUT_STEREO
     * unless the driver reports a wider one - its channel count, and

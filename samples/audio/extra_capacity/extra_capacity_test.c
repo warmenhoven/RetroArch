@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <audio/sinc_resampler.h>
 #ifndef EXTRA_TEST_SIMD
 #define EXTRA_TEST_SIMD 0
 #endif
@@ -60,13 +61,22 @@ static size_t allocation_size(void *p)
 #undef malloc
 
 /* Only the resampler factory is stubbed; preparation and processing are real. */
-bool retro_resampler_realloc(void **re, const retro_resampler_t **backend,
-      const char *ident, enum resampler_quality quality, double ratio)
+bool retro_resampler_realloc_hq(void **re, const retro_resampler_t **backend,
+      const char *ident, enum resampler_quality quality, double ratio, bool hq)
 {
-   (void)ident;
+   static retro_resampler_t alternate;
    if (*re && *backend) (*backend)->free(*re);
+   *re = NULL;
+   *backend = NULL;
+   if (ident && strcmp(ident, "fail") == 0) return false;
    *backend = &sinc_resampler;
-   *re = sinc_resampler.init(NULL, ratio, quality, EXTRA_TEST_SIMD);
+   if (ident && strcmp(ident, "other") == 0)
+   {
+      alternate = sinc_resampler;
+      *backend = &alternate;
+      hq = false;
+   }
+   *re = sinc_resampler_init_hq(ratio, quality, EXTRA_TEST_SIMD, hq);
    return *re != NULL;
 }
 
@@ -361,7 +371,7 @@ static void check_direct_pair(void)
       }
 }
 
-static void check_multichannel_alignment(void)
+static void check_multichannel_alignment(bool hq)
 {
    static audio_driver_state_t st;
    static float source_f[8][127], expected_f[8][512];
@@ -383,12 +393,14 @@ static void check_multichannel_alignment(void)
             st.src_ratio_orig = 2;
             st.resampler_int16_free = sinc_resampler_int16_free;
             st.resampler_int16_process = sinc_resampler_int16_process;
+            CHECK(audio_driver_resampler_realloc(&st, hq));
+            CHECK(st.resampler_hq == hq);
             CHECK(audio_driver_extra_prepare(&st, ch, 0, 127, source_float, lane));
             for (pair = 0; pair < pairs; pair++)
             {
                reference[pair] = lane
-                  ? sinc_resampler_int16_init(2, SINC_INT16_QUALITY_NORMAL)
-                  : sinc_resampler.init(NULL, 2, RESAMPLER_QUALITY_NORMAL, EXTRA_TEST_SIMD);
+                  ? sinc_resampler_int16_init_hq(2, SINC_INT16_QUALITY_NORMAL, hq)
+                  : sinc_resampler_init_hq(2, RESAMPLER_QUALITY_NORMAL, EXTRA_TEST_SIMD, hq);
                if (!reference[pair]) exit(2);
             }
             for (pass = 0; pass < sizeof(counts) / sizeof(counts[0]); pass++)
@@ -475,6 +487,7 @@ static void check_multichannel_alignment(void)
                else sinc_resampler.free(reference[pair]);
             }
             audio_driver_extra_free(&st);
+            st.resampler->free(st.resampler_data);
          }
 }
 
@@ -624,6 +637,64 @@ static void check_size_limits(void)
    }
 }
 
+static void check_hq_policy(void)
+{
+   static audio_driver_state_t st;
+   static float input[64 * 2], actual[1024 * 2], expected[1024 * 2];
+   const double ratios[] = {1, 1.999, 2, 4, 8};
+   unsigned enabled, r, i;
+   memset(&st, 0, sizeof(st));
+   st.resampler_quality = RESAMPLER_QUALITY_NORMAL;
+   for (i = 0; i < 64 * 2; i++) input[i] = (int)(i % 31) / 32.0f;
+   for (enabled = 0; enabled < 2; enabled++)
+      for (r = 0; r < sizeof(ratios) / sizeof(ratios[0]); r++)
+      {
+         struct resampler_data a, b;
+         void *reference;
+         st.src_ratio_orig = ratios[r];
+         CHECK(audio_driver_resampler_realloc(&st, enabled));
+         CHECK(st.resampler_hq == (enabled && ratios[r] >= 2));
+         reference = sinc_resampler_init_hq(ratios[r], RESAMPLER_QUALITY_NORMAL,
+               EXTRA_TEST_SIMD, enabled);
+         if (!reference) exit(2);
+         a.data_in = input; a.data_out = actual; a.input_frames = 64;
+         a.output_frames = 0; a.ratio = ratios[r];
+         b = a; b.data_out = expected;
+         st.resampler->process(st.resampler_data, &a);
+         sinc_resampler.process(reference, &b);
+         CHECK(a.output_frames == b.output_frames);
+         CHECK(memcmp(actual, expected, a.output_frames * 2 * sizeof(float)) == 0);
+         sinc_resampler.free(reference);
+      }
+   /* The fallback must preserve the resolved policy; failed creation and
+    * another backend must not leave software HQ marked active. */
+   CHECK(audio_driver_resampler_realloc(&st, st.resampler_hq));
+   CHECK(st.resampler_hq);
+   strcpy(st.resampler_ident, "fail");
+   CHECK(!audio_driver_resampler_realloc(&st, true));
+   CHECK(!st.resampler_hq && !st.resampler_data);
+   strcpy(st.resampler_ident, "other");
+   CHECK(audio_driver_resampler_realloc(&st, true));
+   CHECK(!st.resampler_hq);
+   st.resampler_ident[0] = '\0';
+   CHECK(audio_driver_resampler_realloc(&st, true));
+   CHECK(st.resampler_hq);
+   CHECK(audio_driver_resampler_realloc(&st, false));
+   CHECK(!st.resampler_hq);
+   st.resampler->free(st.resampler_data);
+
+   memset(&audio_driver_st, 0, sizeof(audio_driver_st));
+   audio_driver_st.src_ratio_orig = 2;
+   audio_driver_st.resampler_quality = RESAMPLER_QUALITY_NORMAL;
+   CHECK(audio_driver_resampler_realloc(&audio_driver_st, true));
+   audio_driver_st.resampler_data_int16 = audio_driver_int16_resampler_new(&audio_driver_st);
+   audio_driver_st.resampler_int16_free = sinc_resampler_int16_free;
+   CHECK(audio_driver_st.resampler_hq && audio_driver_st.resampler_data_int16);
+   audio_driver_deinit_resampler();
+   CHECK(!audio_driver_st.resampler_hq && !audio_driver_st.resampler_data
+         && !audio_driver_st.resampler_data_int16 && !audio_driver_st.resampler);
+}
+
 int main(void)
 {
    check_lane(0);
@@ -631,9 +702,11 @@ int main(void)
    check_bypass();
    check_direct_bypass();
    check_direct_pair();
-   check_multichannel_alignment();
+   check_multichannel_alignment(false);
+   check_multichannel_alignment(true);
    check_scratch_lifecycle();
    check_size_limits();
+   check_hq_policy();
    CHECK(live_allocations() == 0);
    printf("extra capacity: %u failures\n", failures);
    return failures != 0;

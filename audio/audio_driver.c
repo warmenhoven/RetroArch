@@ -542,6 +542,19 @@ static void audio_driver_deinit_resampler(void)
    audio_st->resampler_int16_free    = NULL;
    audio_st->resampler_ident[0] = '\0';
    audio_st->resampler_quality  = RESAMPLER_QUALITY_DONTCARE;
+   audio_st->resampler_hq       = false;
+}
+
+static bool audio_driver_resampler_realloc(audio_driver_state_t *audio_st,
+      bool hq_oversampling)
+{
+   bool initialized = retro_resampler_realloc_hq(&audio_st->resampler_data,
+         &audio_st->resampler, audio_st->resampler_ident,
+         audio_st->resampler_quality, audio_st->src_ratio_orig, hq_oversampling);
+   audio_st->resampler_hq = initialized && hq_oversampling
+      && audio_st->src_ratio_orig >= 2.0
+      && audio_st->resampler == &sinc_resampler;
+   return initialized;
 }
 
 /* Map the shared resampler quality enum onto the integer sinc driver's own
@@ -605,8 +618,9 @@ static void *audio_driver_int16_resampler_new(audio_driver_state_t *audio_st)
    const char *rs_ident = (audio_st->resampler && audio_st->resampler->short_ident)
          ? audio_st->resampler->short_ident : "";
    if (string_is_equal(rs_ident, "sinc"))
-      return sinc_resampler_int16_init(audio_st->src_ratio_orig,
-            audio_sinc_int16_quality_map(audio_st->resampler_quality));
+      return sinc_resampler_int16_init_hq(audio_st->src_ratio_orig,
+            audio_sinc_int16_quality_map(audio_st->resampler_quality),
+            audio_st->resampler_hq);
 #ifdef HAVE_NEAREST_RESAMPLER
    if (string_is_equal(rs_ident, "nearest"))
       return nearest_resampler_int16_init();
@@ -649,9 +663,9 @@ static bool audio_driver_extra_prepare(audio_driver_state_t *audio_st,
          else
          {
             const retro_resampler_t *drv = NULL;
-            retro_resampler_realloc(&audio_st->extra.res[i], &drv,
+            retro_resampler_realloc_hq(&audio_st->extra.res[i], &drv,
                   audio_st->resampler_ident, audio_st->resampler_quality,
-                  audio_st->src_ratio_orig);
+                  audio_st->src_ratio_orig, audio_st->resampler_hq);
          }
          if (!audio_st->extra.res[i])
          {
@@ -2318,6 +2332,7 @@ static void audio_driver_flush(audio_driver_state_t *audio_st,
     * fall through to the float resampler path below (which is exactly
     * where the redundant int16<->float round-trip is avoided). */
    if (audio->write_raw
+         && !audio_st->resampler_hq
          && !is_float
          /* The raw path hands the driver stereo int16 as it is: no
           * upmix, no headphone render. Only when the output is plain
@@ -2929,7 +2944,8 @@ static void audio_driver_flush(audio_driver_state_t *audio_st,
     * slow-motion or fast-forward engages. */
    if (     (   !(AUDIO_FLAGS_GET(audio_st) & AUDIO_FLAG_CONTROL)
              || audio_st->rate_control_delta == 0.0f)
-         && src_data.ratio == 1.0)
+         && src_data.ratio == 1.0
+         && !audio_st->resampler_hq)
    {
       memcpy(audio_st->output_samples_buf, src_data.data_in,
             src_data.input_frames * 2 * sizeof(float));
@@ -2948,9 +2964,7 @@ static void audio_driver_flush(audio_driver_state_t *audio_st,
                && audio_st->resampler_data)
             audio_st->resampler->reset(audio_st->resampler_data);
          else
-            retro_resampler_realloc(&audio_st->resampler_data,
-                  &audio_st->resampler, audio_st->resampler_ident,
-                  audio_st->resampler_quality, audio_st->src_ratio_orig);
+            audio_driver_resampler_realloc(audio_st, audio_st->resampler_hq);
       }
       if (audio_st->resampler_data)
          audio_st->resampler->process(audio_st->resampler_data, &src_data);
@@ -3572,17 +3586,17 @@ bool audio_driver_init_internal(void *settings_data, bool audio_cb_inited)
 
    audio_driver_st.resampler_quality = (enum resampler_quality)settings->uints.audio_resampler_quality;
 
-   if (!retro_resampler_realloc(
-            &audio_driver_st.resampler_data,
-            &audio_driver_st.resampler,
-            audio_driver_st.resampler_ident,
-            audio_driver_st.resampler_quality,
-            audio_driver_st.src_ratio_orig))
+   if (!audio_driver_resampler_realloc(&audio_driver_st,
+            settings->bools.audio_resampler_hq_oversampling))
    {
       RARCH_ERR("Failed to initialize resampler \"%s\".\n",
             audio_driver_st.resampler_ident);
       AUDIO_FLAGS_CLEAR(&audio_driver_st, AUDIO_FLAG_ACTIVE);
    }
+
+   if (audio_driver_st.resampler_hq)
+      RARCH_LOG("[Audio] HQ sinc oversampling active (nominal ratio %.3f).\n",
+            audio_driver_st.src_ratio_orig);
 
    /* Freshly (re)allocated resampler: ring is clean, not in passthrough. */
    audio_driver_st.resampler_bypassed = false;
@@ -3607,9 +3621,10 @@ bool audio_driver_init_internal(void *settings_data, bool audio_cb_inited)
       const char *rs_ident = audio_driver_st.resampler->short_ident;
       if (string_is_equal(rs_ident, "sinc"))
       {
-         audio_driver_st.resampler_data_int16 = sinc_resampler_int16_init(
+         audio_driver_st.resampler_data_int16 = sinc_resampler_int16_init_hq(
                audio_driver_st.src_ratio_orig,
-               audio_sinc_int16_quality_map(audio_driver_st.resampler_quality));
+               audio_sinc_int16_quality_map(audio_driver_st.resampler_quality),
+               audio_driver_st.resampler_hq);
          audio_driver_st.resampler_int16_process = sinc_resampler_int16_process;
          audio_driver_st.resampler_int16_free    = sinc_resampler_int16_free;
       }
