@@ -754,6 +754,36 @@ static void audio_driver_extra_resample(audio_driver_state_t *audio_st,
       convert_float_to_s16(audio_st->extra.in_i, audio_st->extra.in_f, input_frames * ch);
    else if (!int16_path && !audio_st->extra.is_float)
       convert_s16_to_float(audio_st->extra.in_f, audio_st->extra.in_i, input_frames * ch, 1.0f);
+   /* One pair already has the resampler's interleaved stereo layout. */
+   if (ch == 2)
+   {
+      if (int16_path)
+      {
+         struct resampler_data_int16 d;
+         d.data_in       = audio_st->extra.in_i;
+         d.data_out      = audio_st->extra.out_i;
+         d.input_frames  = (unsigned)input_frames;
+         d.output_frames = 0;
+         d.ratio         = ratio;
+         audio_st->resampler_int16_process(audio_st->extra.res[0], &d);
+         out_frames = d.output_frames;
+      }
+      else
+      {
+         struct resampler_data d;
+         d.data_in       = audio_st->extra.in_f;
+         d.data_out      = audio_st->extra.out_f;
+         d.input_frames  = input_frames;
+         d.output_frames = 0;
+         d.ratio         = ratio;
+         audio_st->resampler->process(audio_st->extra.res[0], &d);
+         out_frames = d.output_frames;
+      }
+      audio_st->extra.out_frames = out_frames < audio_st->extra.cap_out
+         ? out_frames : audio_st->extra.cap_out;
+      audio_st->extra.pending = false;
+      return;
+   }
    for (i = 0; i < audio_st->extra.nres; i++)
    {
       unsigned c0 = 2 * i, c1 = 2 * i + 1 < ch ? 2 * i + 1 : 2 * i;
