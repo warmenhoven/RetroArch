@@ -251,6 +251,11 @@ typedef struct gl3
 
    bool pbo_readback_valid[GL_CORE_NUM_PBOS];
    bool menu_texture_rgb32;
+   /* What the last frame said the menu filter should be:
+    * set_texture_frame() is applied by the video thread in
+    * thread_update_driver_state(), and reading the setting there races
+    * the menu writing it. */
+   bool frame_menu_linear_filter;
 } gl3_t;
 
 typedef struct gl3_video_shader_ctx_init
@@ -4735,6 +4740,10 @@ static bool gl3_frame(void *data, const void *frame,
    if (!gl)
       return false;
 
+   /* Travels with the frame, for set_texture_frame() to read rather
+    * than the setting the menu writes */
+   gl->frame_menu_linear_filter = video_info->menu_linear_filter;
+
    /* These travel with the frame, so this thread does not read what the
     * main thread writes: the scRGB encode below and gl3_encode_pq_to_sdr()
     * read the latched copies. */
@@ -5627,15 +5636,18 @@ static void gl3_set_texture_frame(void *data,
       const void *frame, bool rgb32, unsigned width, unsigned height,
       float alpha)
 {
-   settings_t *settings = config_get_ptr();
-   GLenum menu_filter   = settings->bools.menu_linear_filter
-      ? GL_LINEAR : GL_NEAREST;
    unsigned base_size   = rgb32 ? sizeof(uint32_t) : sizeof(uint16_t);
    gl3_t *gl            = (gl3_t*)data;
    bool recreate;
+   /* What the last frame carried, not what the setting says now: the
+    * video thread applies this in thread_update_driver_state(). */
+   GLenum menu_filter;
 
    if (!gl)
       return;
+
+   menu_filter          = gl->frame_menu_linear_filter
+      ? GL_LINEAR : GL_NEAREST;
 
    if (gl->flags & GL3_FLAG_USE_SHARED_CONTEXT)
       gl->ctx_driver->bind_hw_render(gl->ctx_data, false);

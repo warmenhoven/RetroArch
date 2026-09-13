@@ -524,6 +524,9 @@ typedef struct video_frame_info
    /* Read by a driver answering set_aspect_ratio(), which the threaded
     * wrapper runs on the video thread */
    bool ctx_scaling;
+   /* Read by a driver answering apply_state_changes(), which the video
+    * thread runs from thread_update_driver_state() */
+   bool dingux_ipu_keep_aspect;
    bool scale_integer;
    bool video_smooth;
    bool libretro_running;

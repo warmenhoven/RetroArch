@@ -3660,15 +3660,17 @@ static void gl2_set_texture_frame(void *data,
       const void *frame, bool rgb32, unsigned width, unsigned height,
       float alpha)
 {
-   settings_t *settings            = config_get_ptr();
-   enum texture_filter_type
-      menu_filter                  = settings->bools.menu_linear_filter
-      ? TEXTURE_FILTER_LINEAR
-      : TEXTURE_FILTER_NEAREST;
+   enum texture_filter_type menu_filter;
    unsigned base_size              = rgb32 ? sizeof(uint32_t) : sizeof(uint16_t);
    gl2_t *gl                       = (gl2_t*)data;
    if (!gl)
       return;
+
+   /* What the last frame carried, not what the setting says now: the
+    * video thread applies this in thread_update_driver_state(). */
+   menu_filter                     = (gl->flags & GL2_FLAG_MENU_LINEAR_FILTER)
+      ? TEXTURE_FILTER_LINEAR
+      : TEXTURE_FILTER_NEAREST;
 
    if (gl->flags & GL2_FLAG_SHARED_CONTEXT_USE)
       gl->ctx_driver->bind_hw_render(gl->ctx_data, false);
@@ -4327,6 +4329,13 @@ static bool gl2_frame(void *data, const void *frame,
       gl->flags |=  GL2_FLAG_CTX_SCALING;
    else
       gl->flags &= ~GL2_FLAG_CTX_SCALING;
+
+   /* Travels with the frame, for set_texture_frame() to read rather
+    * than the setting the menu writes */
+   if (video_info->menu_linear_filter)
+      gl->flags |=  GL2_FLAG_MENU_LINEAR_FILTER;
+   else
+      gl->flags &= ~GL2_FLAG_MENU_LINEAR_FILTER;
 
    /* Whether to read frames back travels with the frame, so this thread
     * does not read the recording state the main thread writes. */

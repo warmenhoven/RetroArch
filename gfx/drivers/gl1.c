@@ -303,6 +303,11 @@ typedef struct gl1
     * tonemap otherwise). */
    bool source_10bit;
    bool source_hdr10;
+   /* What the last frame said the menu filter should be:
+    * set_texture_frame() is applied by the video thread in
+    * thread_update_driver_state(), and reading the setting there races
+    * the menu writing it. */
+   bool frame_menu_linear_filter;
 } gl1_t;
 
 #ifdef VITA
@@ -2212,6 +2217,7 @@ static bool gl1_frame(void *data, const void *frame,
    unsigned n;
 #ifdef HAVE_MENU
    bool menu_is_alive               = (video_info->menu_st_flags & MENU_ST_FLAG_ALIVE) ? true : false;
+
 #endif
 #ifdef HAVE_GFX_WIDGETS
    bool widgets_active              = video_info->widgets_active;
@@ -2232,6 +2238,10 @@ static bool gl1_frame(void *data, const void *frame,
     * animated XMB backgrounds (Ribbon / Snow / Bokeh / etc.) can't
     * run -- force that off so XMB falls back to the static gradient. */
    video_info->menu_shader_pipeline = 0;
+
+   /* Travels with the frame, for set_texture_frame() to read rather
+    * than the setting the menu writes */
+   gl1->frame_menu_linear_filter    = video_info->menu_linear_filter;
 
    if (gl1->flags & GL1_FLAG_SHOULD_RESIZE)
    {
@@ -2890,14 +2900,17 @@ static void gl1_set_texture_frame(void *data,
       const void *frame, bool rgb32, unsigned width, unsigned height,
       float alpha)
 {
-   settings_t *settings      = config_get_ptr();
-   bool menu_linear_filter   = settings->bools.menu_linear_filter;
    unsigned pitch            = width * (rgb32 ? 4 : 2);
    gl1_t              *gl1   = (gl1_t*)data;
    size_t required;
+   /* What the last frame carried, not what the setting says now: the
+    * video thread applies this in thread_update_driver_state(). */
+   bool menu_linear_filter;
 
    if (!gl1 || !frame || !width || !height || !pitch)
       return;
+
+   menu_linear_filter        = gl1->frame_menu_linear_filter;
 
    if (menu_linear_filter)
       gl1->flags            |=  GL1_FLAG_MENU_SMOOTH;

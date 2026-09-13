@@ -73,7 +73,12 @@ enum gl2_flags
    /* What the last frame said context scaling should be:
     * set_aspect_ratio() runs on the video thread under the threaded
     * wrapper, and reading the setting there races the menu writing it. */
-   GL2_FLAG_CTX_SCALING            = (1 << 25)
+   GL2_FLAG_CTX_SCALING            = (1 << 25),
+   /* What the last frame said the menu filter should be:
+    * set_texture_frame() is applied by the video thread in
+    * thread_update_driver_state(), and reading the setting there races
+    * the menu writing it. */
+   GL2_FLAG_MENU_LINEAR_FILTER     = (1 << 26)
 };
 
 struct gl2

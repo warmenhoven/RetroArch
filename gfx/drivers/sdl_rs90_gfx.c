@@ -108,6 +108,11 @@ struct sdl_rs90_video
     * runs on the video thread under the threaded wrapper, and reading
     * the setting there races the menu writing it. */
    unsigned frame_softfilter_type;
+   /* What the last frame said these should be: apply_state_changes()
+    * is run by the video thread from thread_update_driver_state(), and
+    * reading the settings there races the menu writing them. */
+   bool frame_ipu_keep_aspect;
+   bool frame_integer_scaling;
 };
 
 /* Image interpolation START */
@@ -1077,6 +1082,13 @@ static bool sdl_rs90_gfx_frame(void *data, const void *frame,
    if (unlikely(!vid || (!frame && !vid->menu_active)))
       return true;
 
+   /* Travels with the frame, for set_filtering() and
+    * apply_state_changes() to read rather than the settings the menu
+    * writes: both are run by the video thread. */
+   vid->frame_softfilter_type = video_info->dingux_rs90_softfilter_type;
+   vid->frame_ipu_keep_aspect = video_info->dingux_ipu_keep_aspect;
+   vid->frame_integer_scaling = video_info->scale_integer;
+
    /* If fast forward is currently active, we may
     * push frames at an 'unlimited' rate. Since the
     * display has a fixed refresh rate of 60 Hz (or
@@ -1352,11 +1364,12 @@ static void sdl_rs90_set_filtering(void *data, unsigned index, bool smooth, bool
 static void sdl_rs90_apply_state_changes(void *data)
 {
    sdl_rs90_video_t *vid  = (sdl_rs90_video_t*)data;
-   settings_t *settings   = config_get_ptr();
-   bool keep_aspect       = (settings) ? settings->bools.video_dingux_ipu_keep_aspect : true;
-   bool integer_scaling   = (settings) ? settings->bools.video_scale_integer : false;
+   /* What the last frame carried, not what the settings say now: the
+    * video thread runs this from thread_update_driver_state(). */
+   bool keep_aspect       = (vid) ? vid->frame_ipu_keep_aspect : true;
+   bool integer_scaling   = (vid) ? vid->frame_integer_scaling : false;
 
-   if (!vid || !settings)
+   if (!vid)
       return;
 
    if ((vid->keep_aspect != keep_aspect) ||
