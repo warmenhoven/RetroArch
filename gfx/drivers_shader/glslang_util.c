@@ -914,7 +914,11 @@ static bool glslang_read_shader_file_internal(const char *path,
 cleanup:
    /* Re-find rather than hold a pointer: a nested include may have
     * grown the entry array out from under one taken above. */
-   if (ret && capture && !nested)
+   /* A file that includes others is captured in pragma-only form as
+    * well: its run there is a handful of lines rather than the runs of
+    * everything beneath it, so the memory that rules the full form out
+    * is not at stake. */
+   if (ret && capture && (pragmas_only || !nested))
    {
       struct slang_include_cache_entry *e =
             slang_include_cache_find(cache, path);
