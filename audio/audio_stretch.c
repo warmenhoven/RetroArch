@@ -553,3 +553,175 @@ bool audio_stretch_transition_flush(audio_stretch_transition_t *s,
    io->complete = !s->count || s->fade_offset != 0;
    return true;
 }
+
+enum astretch_stream_phase
+{
+   ASTRETCH_STREAM_RAW, ASTRETCH_STREAM_ACTIVE, ASTRETCH_STREAM_EXIT,
+   ASTRETCH_STREAM_JOIN, ASTRETCH_STREAM_FLUSH, ASTRETCH_STREAM_DONE
+};
+
+struct audio_stretch_stream
+{
+   audio_stretch_t *engine;
+   audio_stretch_transition_t *transition;
+   size_t frame_bytes, count, read, gap;
+   unsigned hop;
+   enum astretch_stream_phase phase;
+   bool eof;
+};
+
+void audio_stretch_stream_free(audio_stretch_stream_t *s)
+{
+   if (!s) return;
+   audio_stretch_free(s->engine);
+   audio_stretch_transition_free(s->transition);
+   free(s);
+}
+
+audio_stretch_stream_t *audio_stretch_stream_new(unsigned rate, unsigned channels,
+      bool is_float, uint32_t search_channels)
+{
+   audio_stretch_stream_t *s;
+   unsigned hop;
+   size_t frame;
+   if (rate < 8000 || rate > 192000 || !channels || channels > 8
+         || !search_channels || (search_channels >> channels)) return NULL;
+   hop = (rate + 187) / 375;
+   frame = channels * (is_float ? sizeof(float) : sizeof(int16_t));
+   s = (audio_stretch_stream_t*)calloc(1, sizeof(*s) + hop * frame);
+   if (!s) return NULL;
+   s->engine = audio_stretch_new(rate, channels, is_float, search_channels);
+   s->transition = audio_stretch_transition_new(channels, is_float, hop);
+   if (!s->engine || !s->transition) { audio_stretch_stream_free(s); return NULL; }
+   s->hop = hop; s->frame_bytes = frame; s->gap = (size_t)-1;
+   return s;
+}
+
+void audio_stretch_stream_reset(audio_stretch_stream_t *s)
+{
+   if (!s) return;
+   audio_stretch_reset(s->engine);
+   audio_stretch_transition_reset(s->transition);
+   s->count = s->read = 0; s->gap = (size_t)-1;
+   s->phase = ASTRETCH_STREAM_RAW; s->eof = false;
+}
+
+static void astretch_stream_pump(audio_stretch_stream_t *s,
+      struct audio_stretch_io *io, double tempo, bool active)
+{
+   while (io->output_frames < io->output_capacity)
+   {
+      struct audio_stretch_io part;
+      struct audio_stretch_drain_io drain;
+      size_t n;
+      part.input = io->input ? (const char*)io->input + io->input_used * s->frame_bytes : NULL;
+      part.input_frames = io->input_frames - io->input_used;
+      part.output = (char*)io->output + io->output_frames * s->frame_bytes;
+      part.output_capacity = io->output_capacity - io->output_frames;
+      if (s->gap == s->read)
+      {
+         /* A drain reports at most one boundary after all active output. */
+         audio_stretch_transition_boundary(s->transition);
+         s->gap = (size_t)-1;
+      }
+      if (s->read < s->count)
+      {
+         n = s->count - s->read;
+         if (s->gap != (size_t)-1 && n > s->gap - s->read) n = s->gap - s->read;
+         part.input = (char*)(s + 1) + s->read * s->frame_bytes;
+         part.input_frames = n;
+         audio_stretch_transition_process(s->transition, &part);
+         s->read += part.input_used; io->output_frames += part.output_frames;
+         continue;
+      }
+      s->read = s->count = 0;
+      if (s->phase == ASTRETCH_STREAM_ACTIVE && (!active || s->eof))
+         s->phase = ASTRETCH_STREAM_EXIT;
+      if (s->phase == ASTRETCH_STREAM_RAW)
+      {
+         if (s->eof) { s->phase = ASTRETCH_STREAM_DONE; break; }
+         if (active) { s->phase = ASTRETCH_STREAM_ACTIVE; continue; }
+         n = part.input_frames < part.output_capacity ? part.input_frames : part.output_capacity;
+         if (n) memcpy(part.output, part.input, n * s->frame_bytes);
+         io->input_used += n; io->output_frames += n;
+         break;
+      }
+      if (s->phase == ASTRETCH_STREAM_ACTIVE)
+      {
+         part.output = s + 1; part.output_capacity = s->hop;
+         audio_stretch_process(s->engine, &part, tempo);
+         io->input_used += part.input_used; s->count = part.output_frames;
+         if (!s->count) break;
+      }
+      else if (s->phase == ASTRETCH_STREAM_EXIT)
+      {
+         drain.output = s + 1; drain.output_capacity = s->hop;
+         audio_stretch_drain(s->engine, &drain);
+         s->count = drain.output_frames; s->gap = drain.gap_offset;
+         if (drain.complete) s->phase = ASTRETCH_STREAM_JOIN;
+      }
+      else if (s->phase == ASTRETCH_STREAM_JOIN)
+      {
+         if (s->transition->fade_total && !s->eof)
+         {
+            if (part.input_frames > s->transition->count)
+               part.input_frames = s->transition->count;
+            if (!part.input_frames) break;
+            audio_stretch_transition_process(s->transition, &part);
+            io->input_used += part.input_used; io->output_frames += part.output_frames;
+         }
+         else s->phase = ASTRETCH_STREAM_FLUSH;
+      }
+      else if (s->phase == ASTRETCH_STREAM_FLUSH)
+      {
+         drain.output = part.output; drain.output_capacity = part.output_capacity;
+         audio_stretch_transition_flush(s->transition, &drain);
+         io->output_frames += drain.output_frames;
+         if (drain.complete)
+         {
+            audio_stretch_reset(s->engine);
+            audio_stretch_transition_reset(s->transition);
+            s->phase = s->eof ? ASTRETCH_STREAM_DONE : ASTRETCH_STREAM_RAW;
+         }
+      }
+      else break;
+   }
+}
+
+bool audio_stretch_stream_process(audio_stretch_stream_t *s,
+      struct audio_stretch_io *io, double tempo, bool active)
+{
+   uint64_t bits;
+   if (!io) return false;
+   io->input_used = io->output_frames = 0;
+   memcpy(&bits, &tempo, sizeof(bits));
+   if (!s || s->eof || bits >= UINT64_C(0x7ff0000000000000)
+         || tempo < 0.25 || tempo > 32.0
+         || (!io->input && io->input_frames) || (!io->output && io->output_capacity)
+         || io->input_frames > (size_t)-1 / s->frame_bytes
+         || io->output_capacity > (size_t)-1 / s->frame_bytes) return false;
+   if (io->output_capacity && !active && s->phase == ASTRETCH_STREAM_ACTIVE)
+      s->phase = ASTRETCH_STREAM_EXIT;
+   astretch_stream_pump(s, io, tempo, active);
+   return true;
+}
+
+bool audio_stretch_stream_flush(audio_stretch_stream_t *s,
+      struct audio_stretch_drain_io *io)
+{
+   struct audio_stretch_io part;
+   if (!io) return false;
+   io->output_frames = 0; io->gap_offset = (size_t)-1; io->complete = false;
+   if (!s || (!io->output && io->output_capacity)
+         || io->output_capacity > (size_t)-1 / s->frame_bytes) return false;
+   if (io->output_capacity)
+   {
+      s->eof = true;
+      memset(&part, 0, sizeof(part));
+      part.output = io->output; part.output_capacity = io->output_capacity;
+      astretch_stream_pump(s, &part, 1.0, false);
+      io->output_frames = part.output_frames;
+   }
+   io->complete = s->phase == ASTRETCH_STREAM_DONE;
+   return true;
+}

@@ -114,3 +114,33 @@ including short/empty streams, wrapped rings, partial EOF, reset and allocation
 failure. Actual high-tempo engine drains are split at their gap markers and
 rejoined with future source input in both native lanes. Runtime frontend wiring,
 short-write ownership, entry scheduling and listening acceptance remain pending.
+
+## Stream adapter
+
+`audio_stretch_stream` owns the engine, transition owner and one hop of native
+staging. Construction performs three allocations; processing and reset perform
+none. All objects are single-consumer. The runtime must publish control changes
+to that consumer and call reset at a stream discontinuity; the adapter does not
+provide atomics, epoch publication or device I/O.
+
+Process accepts a desired active flag and tempo with consumed/produced counts.
+Raw state copies caller input directly. Activation starts the engine with empty
+history. Exit drains pending synthesis/lookahead through the transition owner,
+applies the reported gap boundary, joins future raw input if needed, flushes
+retained transition audio and returns to raw. A subsequent activation waits for
+this exit to finish. EOF drains without future input and latches until reset.
+Zero-capacity calls do not mutate state, including zero-capacity EOF queries.
+
+The adapter stages at most one hop between engine and transition owner, retaining
+partial progress and gap markers across output backpressure. This adds bounded
+native copies in active mode. The transition owner adds one hop of holdback in
+addition to the engine's lookahead. The runtime must retain produced audio until
+SRC/device consumers accept it; resetting or reprocessing a partially written
+output buffer is incorrect. Default inactive frontend paths must bypass the
+adapter entirely. No frontend setting is enabled by this patch.
+
+Tests cover repeated raw/stretch transitions, rapid requests, EOF, allocation
+failures at all three construction stages, reset during processing, output
+canaries and bulk/fragmented equality. Uninterrupted active output is compared
+against direct engine processing plus drain at slow, unity and fractional tempos.
+Full runtime ownership, SRC capacity integration and hardware acceptance remain.

@@ -106,5 +106,20 @@ bool audio_stretch_transition_process(audio_stretch_transition_t *state,
 bool audio_stretch_transition_flush(audio_stretch_transition_t *state,
       struct audio_stretch_drain_io *io);
 
+/* Single-consumer engine/transition adapter. Reset on stream discontinuities.
+ * Input/output must not overlap. Calls allocate nothing; zero capacity is
+ * non-mutating. Retry unconsumed input. A requested exit finishes before a
+ * requested re-entry. Inactive frontend paths should bypass this object.
+ * Flush accepts no input, latches EOF and requires reset before processing. */
+typedef struct audio_stretch_stream audio_stretch_stream_t;
+audio_stretch_stream_t *audio_stretch_stream_new(unsigned rate, unsigned channels,
+      bool is_float, uint32_t search_channels);
+void audio_stretch_stream_free(audio_stretch_stream_t *state);
+void audio_stretch_stream_reset(audio_stretch_stream_t *state);
+bool audio_stretch_stream_process(audio_stretch_stream_t *state,
+      struct audio_stretch_io *io, double tempo, bool active);
+bool audio_stretch_stream_flush(audio_stretch_stream_t *state,
+      struct audio_stretch_drain_io *io);
+
 RETRO_END_DECLS
 #endif

@@ -6,6 +6,7 @@
 
 static unsigned failures, heap_calls;
 static int guarded, fail_init;
+static unsigned fail_after;
 void *__real_malloc(size_t);
 void *__real_calloc(size_t, size_t);
 void *__real_realloc(void*, size_t);
@@ -14,6 +15,7 @@ void *__wrap_malloc(size_t n) { if (guarded) heap_calls++; return __real_malloc(
 void *__wrap_calloc(size_t n, size_t z)
 {
    if (guarded) heap_calls++;
+   if (fail_after && !--fail_after) return NULL;
    return fail_init ? NULL : __real_calloc(n, z);
 }
 void *__wrap_realloc(void *p, size_t n) { if (guarded) heap_calls++; return __real_realloc(p, n); }
@@ -740,6 +742,199 @@ static void transition_drain_chain(void)
          }
 }
 
+static size_t adapter_run(unsigned rate, unsigned channels, unsigned native,
+      double tempo, unsigned modes, unsigned fragmented, unsigned slot, unsigned block)
+{
+   float reset_f[8];
+   int16_t reset_i[8];
+   audio_stretch_stream_t *s = audio_stretch_stream_new(rate, channels, native, 1);
+   const char *src = (const char*)(native ? (void*)input_f : (void*)input_i);
+   char *dst = (char*)(native ? (void*)output_f[slot] : (void*)output_i[slot]);
+   size_t frame = channels * (native ? sizeof(float) : sizeof(int16_t));
+   size_t made = 0, used = 0, check;
+   unsigned stage;
+   struct audio_stretch_io io;
+   struct audio_stretch_drain_io drain;
+   CHECK(s != NULL);
+   if (!s) return 0;
+   memset(dst, 0x5a, OUT_FRAMES * frame);
+   guarded = 1;
+   for (stage = 0; stage < 4; stage++)
+   {
+      size_t end = (stage + 1) * block;
+      while (used < end)
+      {
+         size_t n = fragmented ? used % 67 + 1 : end - used;
+         if (n > end - used) n = end - used;
+         io.input = src + used * frame; io.input_frames = n;
+         io.output = dst + made * frame; io.output_capacity = 0;
+         CHECK(audio_stretch_stream_process(s, &io, tempo, (modes >> stage) & 1));
+         CHECK(!io.input_used && !io.output_frames);
+         io.output_capacity = fragmented ? used % 29 + 1 : OUT_FRAMES - made;
+         CHECK(audio_stretch_stream_process(s, &io, tempo, (modes >> stage) & 1));
+         CHECK(io.input_used <= n && io.output_frames <= io.output_capacity);
+         CHECK(io.input_used || io.output_frames);
+         if (!io.input_used && !io.output_frames) break;
+         used += io.input_used; made += io.output_frames;
+         CHECK(made < OUT_FRAMES);
+      }
+   }
+   do
+   {
+      drain.output = dst + made * frame; drain.output_capacity = fragmented ? 3 : OUT_FRAMES - made;
+      CHECK(audio_stretch_stream_flush(s, &drain));
+      CHECK(drain.output_frames <= drain.output_capacity && drain.gap_offset == (size_t)-1);
+      made += drain.output_frames;
+      CHECK(drain.output_frames || drain.complete);
+      if (!drain.output_frames && !drain.complete) break;
+   } while (!drain.complete);
+   CHECK(!audio_stretch_stream_process(s, &io, tempo, false));
+   CHECK(audio_stretch_stream_flush(s, &drain) && drain.complete && !drain.output_frames);
+   for (check = made * frame; check < OUT_FRAMES * frame; check++)
+      CHECK((unsigned char)dst[check] == 0x5a);
+   audio_stretch_stream_reset(s);
+   io.input = src; io.input_frames = 1; io.output = dst; io.output_capacity = 1;
+   io.output = native ? (void*)reset_f : (void*)reset_i;
+   /* A zero-capacity EOF query must not latch EOF. */
+   drain.output = NULL; drain.output_capacity = 0;
+   CHECK(audio_stretch_stream_flush(s, &drain));
+   CHECK(audio_stretch_stream_process(s, &io, 1.0, false));
+   CHECK(io.input_used == 1 && io.output_frames == 1);
+   guarded = 0;
+   audio_stretch_stream_free(s);
+   return made;
+}
+
+static void adapter_cases(void)
+{
+   const unsigned rates[] = {8000, 48000, 192000};
+   const unsigned masks[] = {0, 1, 5, 15};
+   const double tempos[] = {0.5, 1.0, 1.37, 4.0, 32.0};
+   unsigned r, channels, native, m, t;
+   for (r = 0; r < 3; r++)
+      for (channels = 2; channels <= 8; channels += 6)
+      {
+         fill(channels);
+         for (native = 0; native < 2; native++)
+            for (m = 0; m < 4; m++)
+               for (t = 0; t < 5; t++)
+               {
+                  size_t a, b, frame = channels * (native ? sizeof(float) : sizeof(int16_t));
+                  const void *whole = native ? (void*)output_f[0] : (void*)output_i[0];
+                  const void *parts = native ? (void*)output_f[1] : (void*)output_i[1];
+                  a = adapter_run(rates[r], channels, native, tempos[t], masks[m], 0, 0, FRAMES / 4);
+                  b = adapter_run(rates[r], channels, native, tempos[t], masks[m], 1, 1, FRAMES / 4);
+                  CHECK(a == b);
+                  CHECK(memcmp(whole, parts, a * frame) == 0);
+                  if (!m)
+                  {
+                     CHECK(a == FRAMES);
+                     CHECK(memcmp(whole, native ? (void*)input_f : (void*)input_i, a * frame) == 0);
+                  }
+               }
+      }
+}
+
+static void adapter_reference(void)
+{
+   static float ref_f[OUT_FRAMES * 8];
+   static int16_t ref_i[OUT_FRAMES * 8];
+   const double tempos[] = {0.5, 1.0, 1.37};
+   unsigned channels, native, t;
+   for (channels = 2; channels <= 8; channels += 6)
+      for (native = 0; native < 2; native++)
+         for (t = 0; t < 3; t++)
+         {
+            audio_stretch_t *s = audio_stretch_new(48000, channels, native, 1);
+            char *ref = (char*)(native ? (void*)ref_f : (void*)ref_i);
+            const char *input = (const char*)(native ? (void*)input_f : (void*)input_i);
+            size_t frame = channels * (native ? sizeof(float) : sizeof(int16_t));
+            size_t used = 0, made = 0, n;
+            struct audio_stretch_io io;
+            struct audio_stretch_drain_io drain;
+            fill(channels);
+            while (used < FRAMES)
+            {
+               io.input = input + used * frame; io.input_frames = FRAMES - used;
+               io.output = ref + made * frame; io.output_capacity = OUT_FRAMES - made;
+               CHECK(audio_stretch_process(s, &io, tempos[t]));
+               CHECK(io.input_used || io.output_frames);
+               if (!io.input_used && !io.output_frames) break;
+               used += io.input_used; made += io.output_frames;
+            }
+            drain.output = ref + made * frame; drain.output_capacity = OUT_FRAMES - made;
+            CHECK(audio_stretch_drain(s, &drain) && drain.complete);
+            CHECK(drain.gap_offset == (size_t)-1);
+            made += drain.output_frames;
+            n = adapter_run(48000, channels, native, tempos[t], 15, 1, 0, FRAMES / 4);
+            CHECK(n == made);
+            CHECK(memcmp(ref, native ? (void*)output_f[0] : (void*)output_i[0], n * frame) == 0);
+            audio_stretch_free(s);
+         }
+}
+
+static void adapter_rapid(void)
+{
+   const unsigned blocks[] = {1, 65, 129, 257};
+   unsigned native, b;
+   fill(8);
+   for (native = 0; native < 2; native++)
+      for (b = 0; b < 4; b++)
+      {
+         size_t a = adapter_run(48000, 8, native, 4, 5, 0, 0, blocks[b]);
+         size_t n = adapter_run(48000, 8, native, 4, 5, 1, 1, blocks[b]);
+         CHECK(a == n);
+         CHECK(memcmp(native ? (void*)output_f[0] : (void*)output_i[0],
+                  native ? (void*)output_f[1] : (void*)output_i[1],
+                  a * 8 * (native ? sizeof(float) : sizeof(int16_t))) == 0);
+      }
+}
+
+static void adapter_contracts(void)
+{
+   audio_stretch_stream_t *s;
+   struct audio_stretch_io io;
+   struct audio_stretch_drain_io drain;
+   unsigned n;
+   int16_t output[8];
+   CHECK(!audio_stretch_stream_new(7999, 2, false, 1));
+   CHECK(!audio_stretch_stream_new(48000, 9, false, 1));
+   CHECK(!audio_stretch_stream_new(48000, 2, false, 4));
+   for (n = 1; n <= 3; n++)
+   {
+      fail_after = n;
+      CHECK(!audio_stretch_stream_new(48000, 2, false, 1));
+      fail_after = 0;
+   }
+   s = audio_stretch_stream_new(48000, 2, false, 1);
+   memset(output, 0x5a, sizeof(output));
+   io.input = input_i; io.input_frames = 1; io.output = output; io.output_capacity = 1;
+   guarded = 1;
+   CHECK(!audio_stretch_stream_process(s, &io, -1, true));
+   CHECK(!audio_stretch_stream_process(s, &io, 33, true));
+   io.input_frames = (size_t)-1;
+   CHECK(!audio_stretch_stream_process(s, &io, 1, true));
+   io.input_frames = 1; io.output = NULL;
+   CHECK(!audio_stretch_stream_process(s, &io, 1, true));
+   CHECK(io.input_used == 0 && io.output_frames == 0);
+   CHECK(output[0] == 0x5a5a);
+   drain.output = NULL; drain.output_capacity = 1;
+   CHECK(!audio_stretch_stream_flush(s, &drain));
+   io.output = output;
+   CHECK(audio_stretch_stream_process(s, &io, 1, false));
+   CHECK(io.input_used == 1 && io.output_frames == 1);
+   audio_stretch_stream_reset(s);
+   /* Reset a partial active stream rather than only completed EOF. */
+   io.input_frames = 256;
+   CHECK(audio_stretch_stream_process(s, &io, 4, true));
+   audio_stretch_stream_reset(s);
+   io.input_frames = 1;
+   CHECK(audio_stretch_stream_process(s, &io, 1, false));
+   CHECK(io.input_used == 1 && io.output_frames == 1);
+   guarded = 0;
+   audio_stretch_stream_free(s);
+}
+
 int main(void)
 {
    contracts();
@@ -752,6 +947,10 @@ int main(void)
    crossfade_cases();
    transition_cases();
    transition_drain_chain();
+   adapter_cases();
+   adapter_reference();
+   adapter_contracts();
+   adapter_rapid();
    CHECK(heap_calls == 0);
    printf("stretch: %u failures, %u processing/reset heap calls\n", failures, heap_calls);
    return failures != 0;
