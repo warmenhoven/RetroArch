@@ -4787,7 +4787,7 @@ bool video_context_driver_get_refresh_rate(float *refresh_rate)
    if (!ctx_data)
       return false;
 
-   if (video_st->main_flags & VIDEO_FLAG_CRT_SWITCHING_ACTIVE)
+   if (retro_atomic_load_acquire_int(&video_st->crt_switching_active))
    {
       float refresh_holder = 0;
       if (refresh_rate)
@@ -6662,7 +6662,7 @@ void video_driver_frame(const void *data, unsigned width,
       unsigned native_width     = width;
       bool dynamic_super_width  = false;
 
-      video_st->main_flags |=  VIDEO_FLAG_CRT_SWITCHING_ACTIVE;
+      retro_atomic_store_release_int(&video_st->crt_switching_active, 1);
 
       switch (video_info.crt_switch_resolution_super)
       {
@@ -6696,7 +6696,7 @@ void video_driver_frame(const void *data, unsigned width,
    }
    else if (!video_info.crt_switch_resolution)
 #endif
-      video_st->main_flags &= ~VIDEO_FLAG_CRT_SWITCHING_ACTIVE;
+      retro_atomic_store_release_int(&video_st->crt_switching_active, 0);
 
    if (video_info.scanline_sync && !video_info.input_driver_nonblock_state)
       video_driver_scanline_after_frame(video_st,

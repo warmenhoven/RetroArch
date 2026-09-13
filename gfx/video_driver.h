@@ -97,8 +97,7 @@ RETRO_BEGIN_DECLS
 enum video_driver_state_flags
 {
    VIDEO_FLAG_DEFERRED_VIDEO_CTX_DRIVER_SET_FLAGS = (1 << 0 ),
-   /* The four VIDEO_FLAG_WIDGETS_* bits, VIDEO_FLAG_ACTIVE and
-    * VIDEO_FLAG_CRT_SWITCHING_ACTIVE live in
+   /* The four VIDEO_FLAG_WIDGETS_* bits and VIDEO_FLAG_ACTIVE live in
     * video_driver_state_t::main_flags, not in 'flags' */
    VIDEO_FLAG_WIDGETS_PAUSED                      = (1 << 2 ),
    VIDEO_FLAG_WIDGETS_FASTMOTION                  = (1 << 3 ),
@@ -129,7 +128,6 @@ enum video_driver_state_flags
     * Bit left reserved rather than reused. */
    VIDEO_FLAG_ACTIVE                              = (1 << 11),
    VIDEO_FLAG_STATE_OUT_RGB32                     = (1 << 12),
-   VIDEO_FLAG_CRT_SWITCHING_ACTIVE                = (1 << 13),
    VIDEO_FLAG_FORCE_FULLSCREEN                    = (1 << 14),
    VIDEO_FLAG_IS_SWITCHING_DISPLAY_MODE           = (1 << 15),
    VIDEO_FLAG_SHADER_PRESETS_NEED_RELOAD          = (1 << 16),
@@ -1103,12 +1101,18 @@ typedef struct
 
    uint32_t flags;
    /* Display state only the main thread writes and reads - the
-    * VIDEO_FLAG_WIDGETS_* bits, VIDEO_FLAG_ACTIVE and
-    * VIDEO_FLAG_CRT_SWITCHING_ACTIVE, several of them changed every
-    * frame - apart from 'flags', which the video thread's drivers also
-    * change, so it takes no display_lock. The frame's snapshot
-    * (video_frame_info_t::video_st_flags) carries both words. */
+    * VIDEO_FLAG_WIDGETS_* bits and VIDEO_FLAG_ACTIVE, several of them
+    * changed every frame - apart from 'flags', which the video
+    * thread's drivers also change, so it takes no display_lock. The
+    * frame's snapshot (video_frame_info_t::video_st_flags) carries
+    * both words. */
    uint32_t main_flags;
+
+   /* Whether CRT switching is on. Not a bit of main_flags: the video
+    * thread reads it, through the refresh rate its driver answers
+    * with, and a read-modify-write of that word on the main thread
+    * races such a read. */
+   retro_atomic_int_t crt_switching_active;
 
 #ifdef HAVE_VIDEO_FILTER
    unsigned state_scale;

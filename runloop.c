@@ -5068,7 +5068,7 @@ void runloop_set_video_swap_interval(
    float video_refresh_rate       = settings->floats.video_refresh_rate;
    float audio_max_timing_skew    = settings->floats.audio_max_timing_skew;
    float input_fps                = video_st->av_info.timing.fps;
-   float timing_fps               = (video_st->main_flags & VIDEO_FLAG_CRT_SWITCHING_ACTIVE)
+   float timing_fps               = retro_atomic_load_acquire_int(&video_st->crt_switching_active)
          ? input_fps : video_refresh_rate;
    float swap_ratio               = 1;
    float timing_skew              = 0;

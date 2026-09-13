@@ -1504,7 +1504,7 @@ static void driver_adjust_system_rates(
    {
       float timing_skew_hz          = video_refresh_rate;
 
-      if (video_st->main_flags & VIDEO_FLAG_CRT_SWITCHING_ACTIVE)
+      if (retro_atomic_load_acquire_int(&video_st->crt_switching_active))
          timing_skew_hz             = input_fps;
       video_st->core_hz             = input_fps;
 
@@ -2046,7 +2046,7 @@ static void retroarch_deinit_drivers(struct retro_callbacks *cbs)
 
 #if defined(HAVE_MODELINE)
    /* Switchres deinit */
-   if (video_st->main_flags & VIDEO_FLAG_CRT_SWITCHING_ACTIVE)
+   if (retro_atomic_load_acquire_int(&video_st->crt_switching_active))
       crt_destroy_modes(&video_st->crt_switch_st);
 #endif
 
