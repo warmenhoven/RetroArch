@@ -12,7 +12,8 @@ SOURCES = resampler_options_test.c $(COMMON)/audio/resampler/audio_resampler.c \
  $(COMMON)/audio/resampler/drivers/sinc_resampler.c \
  $(COMMON)/audio/resampler/drivers/nearest_resampler.c $(COMMON)/memmap/memalign.c
 all: resampler_options_test
-resampler_options_test: $(SOURCES) $(COMMON)/include/audio/audio_resampler.h
+resampler_options_test: $(SOURCES) $(COMMON)/include/audio/audio_resampler.h \
+ $(COMMON)/audio/resampler/drivers/sinc_resampler_internal.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(SOURCES) $(LDFLAGS) $(LDLIBS) -o $@
 check: resampler_options_test
 	./resampler_options_test

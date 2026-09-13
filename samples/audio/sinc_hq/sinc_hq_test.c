@@ -20,6 +20,7 @@ static unsigned failures;
 #define CHECK(x) do { if (!(x)) { printf("FAIL line %d: %s\n", __LINE__, #x); failures++; } } while (0)
 #ifdef SINC_TRACK_ALLOCATIONS
 static unsigned long allocator_calls;
+static unsigned long table_allocations;
 void *__real_malloc(size_t);
 void *__real_calloc(size_t, size_t);
 void *__real_realloc(void *, size_t);
@@ -49,6 +50,7 @@ void __wrap_free(void *p)
 void *__wrap_memalign_alloc(size_t alignment, size_t n)
 {
    allocator_calls++;
+   table_allocations++;
    return __real_memalign_alloc(alignment, n);
 }
 void __wrap_memalign_free(void *p)
@@ -58,6 +60,7 @@ void __wrap_memalign_free(void *p)
 }
 #else
 #define allocator_calls 0ul
+#define table_allocations 0ul
 #endif
 
 #ifdef SINC_REFERENCE
@@ -166,6 +169,73 @@ static void reset_integer(double ratio, enum sinc_int16_quality quality, int hq)
    }
    sinc_resampler_int16_free(dirty);
    sinc_resampler_int16_free(fresh);
+}
+
+static void invalid_nominal_ratios(void)
+{
+   const uint64_t invalid[] = {
+      UINT64_C(0), UINT64_C(0x8000000000000000),
+      UINT64_C(0xbff0000000000000), UINT64_C(0x7ff0000000000000),
+      UINT64_C(0xfff0000000000000), UINT64_C(0x7ff8000000000001),
+      UINT64_C(0x7ff0000000000001), UINT64_C(1),
+      UINT64_C(0x0010000000000000), UINT64_C(0x7fefffffffffffff)
+   };
+   unsigned i, q, h;
+   for (q = RESAMPLER_QUALITY_DONTCARE; q <= RESAMPLER_QUALITY_HIGHEST; q++)
+      for (h = 0; h < 2; h++)
+         for (i = 0; i < sizeof(invalid) / sizeof(invalid[0]) + 2; i++)
+         {
+            double ratio;
+            void *f, *integer;
+            unsigned long tables_before = table_allocations;
+            enum sinc_int16_quality iq = q == RESAMPLER_QUALITY_DONTCARE
+               ? SINC_INT16_QUALITY_NORMAL : (enum sinc_int16_quality)(q - 1);
+            if (i < sizeof(invalid) / sizeof(invalid[0]))
+               memcpy(&ratio, &invalid[i], sizeof(ratio));
+            else
+               ratio = i == sizeof(invalid) / sizeof(invalid[0])
+                  ? 16777217.0 : 1.0 / 2048.0;
+            f = sinc_resampler_init_hq(ratio, (enum resampler_quality)q, TEST_SIMD, h);
+            integer = sinc_resampler_int16_init_hq(ratio, iq, h);
+            CHECK(!f && !integer);
+            CHECK(table_allocations == tables_before);
+            sinc_resampler.free(f);
+            sinc_resampler_int16_free(integer);
+         }
+}
+
+static void nominal_clock_boundaries(void)
+{
+   unsigned q, h;
+   for (q = RESAMPLER_QUALITY_DONTCARE; q <= RESAMPLER_QUALITY_HIGHEST; q++)
+      for (h = 0; h < 2; h++)
+      {
+         double upper = !h && (q == RESAMPLER_QUALITY_LOWEST || q == RESAMPLER_QUALITY_LOWER)
+            ? 4194304.0 : 16777216.0;
+         double lower = (q == RESAMPLER_QUALITY_LOWEST || q == RESAMPLER_QUALITY_LOWER
+               ? 4194304.0 : 16777216.0) / UINT32_MAX;
+         enum sinc_int16_quality iq = q == RESAMPLER_QUALITY_DONTCARE
+            ? SINC_INT16_QUALITY_NORMAL : (enum sinc_int16_quality)(q - 1);
+         void *f = sinc_resampler_init_hq(upper, (enum resampler_quality)q, TEST_SIMD, h);
+         void *integer = sinc_resampler_int16_init_hq(upper, iq, h);
+         unsigned long tables_before;
+         CHECK(f && integer);
+         sinc_resampler.free(f);
+         sinc_resampler_int16_free(integer);
+         tables_before = table_allocations;
+         f = sinc_resampler_init_hq(upper + 1, (enum resampler_quality)q, TEST_SIMD, h);
+         integer = sinc_resampler_int16_init_hq(upper + 1, iq, h);
+         CHECK(!f && !integer);
+         sinc_resampler.free(f);
+         sinc_resampler_int16_free(integer);
+         /* The step fits in uint32_t, but adding residual phase would wrap. */
+         f = sinc_resampler_init_hq(lower, (enum resampler_quality)q, TEST_SIMD, h);
+         integer = sinc_resampler_int16_init_hq(lower, iq, h);
+         CHECK(!f && !integer);
+         CHECK(table_allocations == tables_before);
+         sinc_resampler.free(f);
+         sinc_resampler_int16_free(integer);
+      }
 }
 
 static void simd_phases(double ratio, enum resampler_quality quality)
@@ -306,6 +376,8 @@ int main(int argc, char **argv)
       input_i[j] = (int16_t)((int)(noise >> 18) - 8192);
       input[j] = input_i[j] / 32768.0f;
    }
+   invalid_nominal_ratios();
+   nominal_clock_boundaries();
    for (r = 0; r < sizeof(ratios)/sizeof(ratios[0]); r++)
    {
       for (q = RESAMPLER_QUALITY_DONTCARE; q <= RESAMPLER_QUALITY_HIGHEST; q++)

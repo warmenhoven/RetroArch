@@ -63,6 +63,9 @@ static void sinc_cases(void)
       compare(state, driver, reference, &sinc_resampler, 4);
       sinc_resampler.free(reference);
    }
+   CHECK(!retro_resampler_realloc_hq(&state, &driver, "sinc", RESAMPLER_QUALITY_NORMAL, 0, true));
+   CHECK(!state && !driver);
+   CHECK(retro_resampler_realloc(&state, &driver, "sinc", RESAMPLER_QUALITY_NORMAL, 4));
    /* A failing backend leaves no stale handle or dispatch pointer. */
    CHECK(!retro_resampler_realloc_hq(&state, &driver, "null", RESAMPLER_QUALITY_NORMAL, 4, true));
    CHECK(!state && !driver);
