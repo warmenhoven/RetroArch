@@ -1,6 +1,8 @@
 CC = gcc
 ROOT = ../../..
 COMMON = $(ROOT)/libretro-common
+SIMD_MASK ?= 0
+CPPFLAGS += -DEXTRA_TEST_SIMD=$(SIMD_MASK)
 CPPFLAGS += -DRARCH_INTERNAL -I$(ROOT) -I$(COMMON)/include -I$(ROOT)/deps -I$(ROOT)/deps/stb
 CFLAGS += -O2 -std=gnu99 -ffunction-sections -fdata-sections
 LDFLAGS += -Wl,--gc-sections -Wl,--wrap=free

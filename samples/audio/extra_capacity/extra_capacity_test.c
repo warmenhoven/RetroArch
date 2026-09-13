@@ -1,6 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef EXTRA_TEST_SIMD
+#define EXTRA_TEST_SIMD 0
+#endif
 static unsigned heap_calls;
 static unsigned fail_at;
 static struct { void *ptr; size_t size; } allocations[128];
@@ -63,7 +66,7 @@ bool retro_resampler_realloc(void **re, const retro_resampler_t **backend,
    (void)ident;
    if (*re && *backend) (*backend)->free(*re);
    *backend = &sinc_resampler;
-   *re = sinc_resampler.init(NULL, ratio, quality, 0);
+   *re = sinc_resampler.init(NULL, ratio, quality, EXTRA_TEST_SIMD);
    return *re != NULL;
 }
 
@@ -87,7 +90,7 @@ static void check_lane(int integer)
    st.resampler_int16_process = sinc_resampler_int16_process;
    st.resampler_int16_free = sinc_resampler_int16_free;
    front = integer ? sinc_resampler_int16_init(8.0, SINC_INT16_QUALITY_NORMAL)
-      : sinc_resampler.init(NULL, 8.0, RESAMPLER_QUALITY_NORMAL, 0);
+      : sinc_resampler.init(NULL, 8.0, RESAMPLER_QUALITY_NORMAL, EXTRA_TEST_SIMD);
    if (!front) exit(2);
    for (step = 0; step < 5; step++)
    {
@@ -160,7 +163,7 @@ static void check_bypass(void)
    st.output_samples_buf_length = sizeof(front_output);
    /* Four extras exercise two independently owned histories. */
    CHECK(audio_driver_extra_prepare(&st, 4, 0, 256, true, false));
-   front = sinc_resampler.init(NULL, 1.0, RESAMPLER_QUALITY_NORMAL, 0);
+   front = sinc_resampler.init(NULL, 1.0, RESAMPLER_QUALITY_NORMAL, EXTRA_TEST_SIMD);
    if (!front) exit(2);
    for (i = 0; i < 256; i++)
    {
@@ -311,7 +314,7 @@ static void check_direct_pair(void)
          st.resampler_int16_process = sinc_resampler_int16_process;
          CHECK(audio_driver_extra_prepare(&st, 2, 0, 127, source_float != 0, integer != 0));
          reference = integer ? sinc_resampler_int16_init(2, SINC_INT16_QUALITY_NORMAL)
-            : sinc_resampler.init(NULL, 2, RESAMPLER_QUALITY_NORMAL, 0);
+            : sinc_resampler.init(NULL, 2, RESAMPLER_QUALITY_NORMAL, EXTRA_TEST_SIMD);
          if (!reference) exit(2);
          for (pass = 0; pass < sizeof(ratios) / sizeof(ratios[0]); pass++)
          {
@@ -356,6 +359,123 @@ static void check_direct_pair(void)
          else sinc_resampler.free(reference);
          audio_driver_extra_free(&st);
       }
+}
+
+static void check_multichannel_alignment(void)
+{
+   static audio_driver_state_t st;
+   static float source_f[8][127], expected_f[8][512];
+   static int16_t source_i[8][127], expected_i[8][512];
+   static float pair_f[127 * 2], output_f[512 * 2];
+   static int16_t pair_i[127 * 2], output_i[512 * 2];
+   const size_t counts[] = {0, 1, 31, 127, 128, 63, 17, 127};
+   const double ratios[] = {2, 2, 1.999, 2.001, 0.5, 1, 4, 1.25};
+   unsigned ch, lane, source_float, pass, c, i, pair;
+   for (ch = 1; ch <= 8; ch++)
+      for (lane = 0; lane < 2; lane++)
+         for (source_float = 0; source_float < 2; source_float++)
+         {
+            void *reference[4];
+            unsigned pairs = (ch + 1) / 2;
+            memset(&st, 0, sizeof(st));
+            st.resampler = &sinc_resampler;
+            st.resampler_quality = RESAMPLER_QUALITY_NORMAL;
+            st.src_ratio_orig = 2;
+            st.resampler_int16_free = sinc_resampler_int16_free;
+            st.resampler_int16_process = sinc_resampler_int16_process;
+            CHECK(audio_driver_extra_prepare(&st, ch, 0, 127, source_float, lane));
+            for (pair = 0; pair < pairs; pair++)
+            {
+               reference[pair] = lane
+                  ? sinc_resampler_int16_init(2, SINC_INT16_QUALITY_NORMAL)
+                  : sinc_resampler.init(NULL, 2, RESAMPLER_QUALITY_NORMAL, EXTRA_TEST_SIMD);
+               if (!reference[pair]) exit(2);
+            }
+            for (pass = 0; pass < sizeof(counts) / sizeof(counts[0]); pass++)
+            {
+               size_t frames = counts[pass] > 127 ? 127 : counts[pass];
+               size_t produced = 0, bytes, tail;
+               unsigned before = heap_calls;
+               memset(st.extra.in_f, 0x5a, 127 * ch * sizeof(float));
+               memset(st.extra.in_i, 0x5a, 127 * ch * sizeof(int16_t));
+               for (c = 0; c < ch; c++)
+                  for (i = 0; i < 127; i++)
+                  {
+                     int value = (int)((i * 997 + c * 7919 + pass * 3571) % 65536) - 32768;
+                     source_i[c][i] = (int16_t)value;
+                     source_f[c][i] = value / 24576.0f;
+                     if (source_float) st.extra.in_f[i * ch + c] = source_f[c][i];
+                     else st.extra.in_i[i * ch + c] = source_i[c][i];
+                  }
+               /* Separate planar sources keep the oracle independent of
+                * any conversion or staging performed by the frontend. */
+               for (pair = 0; pair < pairs; pair++)
+               {
+                  size_t n;
+                  unsigned left = pair * 2;
+                  unsigned right = left + 1 < ch ? left + 1 : left;
+                  for (i = 0; i < frames; i++)
+                  {
+                     pair_f[2 * i] = source_f[left][i];
+                     pair_f[2 * i + 1] = source_f[right][i];
+                     pair_i[2 * i] = source_i[left][i];
+                     pair_i[2 * i + 1] = source_i[right][i];
+                  }
+                  if (lane)
+                  {
+                     struct resampler_data_int16 d;
+                     if (source_float) convert_float_to_s16(pair_i, pair_f, frames * 2);
+                     d.data_in = pair_i; d.data_out = output_i;
+                     d.input_frames = frames; d.output_frames = 0; d.ratio = ratios[pass];
+                     sinc_resampler_int16_process(reference[pair], &d);
+                     n = d.output_frames;
+                  }
+                  else
+                  {
+                     struct resampler_data d;
+                     if (!source_float) convert_s16_to_float(pair_f, pair_i, frames * 2, 1.0f);
+                     d.data_in = pair_f; d.data_out = output_f;
+                     d.input_frames = frames; d.output_frames = 0; d.ratio = ratios[pass];
+                     sinc_resampler.process(reference[pair], &d);
+                     n = d.output_frames;
+                  }
+                  CHECK(n <= 512);
+                  if (n > 512) exit(2);
+                  if (pair) CHECK(n == produced);
+                  produced = n;
+                  for (i = 0; i < n; i++)
+                  {
+                     expected_f[left][i] = output_f[2 * i];
+                     expected_i[left][i] = output_i[2 * i];
+                     if (right != left)
+                     {
+                        expected_f[right][i] = output_f[2 * i + 1];
+                        expected_i[right][i] = output_i[2 * i + 1];
+                     }
+                  }
+               }
+               bytes = st.extra.cap_out * ch * (lane ? sizeof(int16_t) : sizeof(float));
+               memset(lane ? (void*)st.extra.out_i : (void*)st.extra.out_f, 0xa5, bytes);
+               st.extra.pending = true;
+               audio_driver_extra_resample(&st, ratios[pass], counts[pass], false, lane);
+               CHECK(!st.extra.pending && st.extra.out_frames == produced);
+               CHECK(heap_calls == before);
+               for (c = 0; c < ch; c++)
+                  for (i = 0; i < produced; i++)
+                  {
+                     if (lane) CHECK(st.extra.out_i[i * ch + c] == expected_i[c][i]);
+                     else CHECK(memcmp(&st.extra.out_f[i * ch + c], &expected_f[c][i], sizeof(float)) == 0);
+                  }
+               for (tail = produced * ch * (lane ? sizeof(int16_t) : sizeof(float)); tail < bytes; tail++)
+                  CHECK(((unsigned char*)(lane ? (void*)st.extra.out_i : (void*)st.extra.out_f))[tail] == 0xa5);
+            }
+            for (pair = 0; pair < pairs; pair++)
+            {
+               if (lane) sinc_resampler_int16_free(reference[pair]);
+               else sinc_resampler.free(reference[pair]);
+            }
+            audio_driver_extra_free(&st);
+         }
 }
 
 static void check_scratch_lifecycle(void)
@@ -511,6 +631,7 @@ int main(void)
    check_bypass();
    check_direct_bypass();
    check_direct_pair();
+   check_multichannel_alignment();
    check_scratch_lifecycle();
    check_size_limits();
    CHECK(live_allocations() == 0);
