@@ -820,3 +820,8 @@ jobs:
         working-directory: samples/audio/extra_capacity
         run: |
           make check SANITIZER=address,undefined
+
+      - name: Build and run resampler option tests (C89, ASan + UBSan)
+        working-directory: samples/audio/resampler_options
+        run: |
+          make check SANITIZER=address,undefined
