@@ -120,6 +120,7 @@ static size_t chain_free(void)
    return chain_state.produced;
 }
 
+#ifndef STRETCH_CHAIN_EMBEDDED
 int main(void)
 {
    const double ratios[] = {0.75, 2.0, 4.0};
@@ -209,3 +210,5 @@ int main(void)
    printf("stretch + sinc: %u failures, %u guarded heap calls\n", failures, heap_calls);
    return failures != 0;
 }
+
+#endif

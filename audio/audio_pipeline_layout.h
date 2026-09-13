@@ -11,6 +11,9 @@
 #include <retro_inline.h>
 
 #define AUDIO_PIPELINE_LAYOUT_CAPACITY 64
+#define AUDIO_PIPELINE_TEMPO_MASK UINT32_C(0x003fffff)
+#define AUDIO_PIPELINE_STRETCH UINT32_C(0x00400000)
+#define AUDIO_PIPELINE_RESET UINT32_C(0x80000000)
 
 /* Metadata only. One producer publishes a boundary BEFORE the corresponding
  * audio head. One consumer observes the audio head BEFORE calling limit.
@@ -19,11 +22,13 @@ typedef struct audio_pipeline_layout
 {
    retro_atomic_size_t head;
    unsigned published_layout;
-   uint8_t producer_pad[64];
+   uint32_t published_control;
+   uint8_t producer_pad[60];
    retro_atomic_size_t tail;
    unsigned current_layout;
-   uint8_t consumer_pad[64];
-   struct { size_t position; unsigned layout; } events[AUDIO_PIPELINE_LAYOUT_CAPACITY];
+   uint32_t current_control, reset_serial;
+   uint8_t consumer_pad[56];
+   struct { size_t position; unsigned layout; uint32_t control; } events[AUDIO_PIPELINE_LAYOUT_CAPACITY];
 } audio_pipeline_layout_t;
 
 /* Initialize/reset only with both owners stopped, alongside the audio ring. */
@@ -33,31 +38,65 @@ static INLINE void audio_pipeline_layout_init(audio_pipeline_layout_t *q,
    retro_atomic_size_init(&q->head, 0);
    retro_atomic_size_init(&q->tail, 0);
    q->published_layout = q->current_layout = layout;
+   q->published_control = q->current_control = 65536;
+   q->reset_serial = 0;
 }
 
-/* Producer only. False means metadata is full: do not publish new-layout
- * audio until this succeeds. Unchanged layouts touch no shared cursor. */
-static INLINE bool audio_pipeline_layout_publish(audio_pipeline_layout_t *q,
-      size_t position, unsigned layout)
+/* Producer only; control may include a forced discontinuity. */
+static INLINE bool audio_pipeline_layout_event(audio_pipeline_layout_t *q,
+      size_t position, unsigned layout, uint32_t control)
 {
-   size_t head, tail, slot;
-   if (layout == q->published_layout) return true;
-   head = retro_atomic_load_relaxed_size(&q->head);
-   tail = retro_atomic_load_acquire_size(&q->tail);
+   size_t head = retro_atomic_load_relaxed_size(&q->head);
+   size_t tail = retro_atomic_load_acquire_size(&q->tail);
+   size_t slot;
    if (head - tail == AUDIO_PIPELINE_LAYOUT_CAPACITY) return false;
    slot = head & (AUDIO_PIPELINE_LAYOUT_CAPACITY - 1);
    q->events[slot].position = position;
    q->events[slot].layout   = layout;
+   q->events[slot].control  = control;
    q->published_layout     = layout;
+   q->published_control    = control & ~AUDIO_PIPELINE_RESET;
    retro_atomic_store_release_size(&q->head, head + 1);
    return true;
 }
 
+/* Producer only. False means metadata is full: do not publish new-layout
+ * audio until this succeeds. Unchanged layouts touch no shared cursor.
+ * Layout-only publication preserves the current transport request. */
+static INLINE bool audio_pipeline_layout_publish(audio_pipeline_layout_t *q,
+      size_t position, unsigned layout)
+{
+   if (layout == q->published_layout) return true;
+   return audio_pipeline_layout_event(q, position, layout, q->published_control);
+}
+
+/* Publish layout and transport together, BEFORE their source audio. Tempo is
+ * source frames/output frame in Q16, 0.25..32 when active; inactive uses 1x.
+ * False leaves metadata unchanged: retry the request before publishing audio.
+ * reset requests a DSP-history discard here, even for an unchanged request. */
+static INLINE bool audio_pipeline_layout_publish_transport(
+      audio_pipeline_layout_t *q, size_t position, unsigned layout,
+      uint32_t tempo_q16, bool active, bool reset)
+{
+   uint32_t control = 65536;
+   if (active)
+   {
+      if (tempo_q16 < 16384 || tempo_q16 > 2097152) return false;
+      control = tempo_q16 | AUDIO_PIPELINE_STRETCH;
+   }
+   if (!reset && layout == q->published_layout && control == q->published_control)
+      return true;
+   if (reset) control |= AUDIO_PIPELINE_RESET;
+   return audio_pipeline_layout_event(q, position, layout, control);
+}
+
 /* Consumer only. Bound a read to one layout and retire boundaries passed by
  * an explicit consumer discard. capacity is the audio ring's capacity (at
- * most SIZE_MAX/2); bytes was obtained from its acquired head snapshot. */
-static INLINE size_t audio_pipeline_layout_limit(audio_pipeline_layout_t *q,
-      size_t position, size_t bytes, size_t capacity)
+ * most SIZE_MAX/2); bytes was obtained from its acquired head snapshot.
+ * Compare reset_serial before/after: every retired reset advances it, including
+ * resets crossed by a discard or multiple requests at the same position. */
+static INLINE size_t audio_pipeline_layout_limit_impl(audio_pipeline_layout_t *q,
+      size_t position, size_t bytes, size_t capacity, bool transport)
 {
    size_t tail = retro_atomic_load_relaxed_size(&q->tail);
    size_t head = retro_atomic_load_acquire_size(&q->head);
@@ -72,9 +111,29 @@ static INLINE size_t audio_pipeline_layout_limit(audio_pipeline_layout_t *q,
          break;
       }
       q->current_layout = q->events[slot].layout;
+      if (transport)
+      {
+         q->current_control = q->events[slot].control & ~AUDIO_PIPELINE_RESET;
+         if (q->events[slot].control & AUDIO_PIPELINE_RESET) q->reset_serial++;
+      }
       tail++;
    }
    if (tail != first) retro_atomic_store_release_size(&q->tail, tail);
    return bytes;
+}
+
+/* Legacy layout-only consumers do not interpret transport requests. */
+static INLINE size_t audio_pipeline_layout_limit(audio_pipeline_layout_t *q,
+      size_t position, size_t bytes, size_t capacity)
+{
+   return audio_pipeline_layout_limit_impl(q, position, bytes, capacity, false);
+}
+
+/* Use this reader for every retirement on a transport-enabled pipeline,
+ * including zero-byte reads and discards. A layout-only reader loses resets. */
+static INLINE size_t audio_pipeline_layout_limit_transport(audio_pipeline_layout_t *q,
+      size_t position, size_t bytes, size_t capacity)
+{
+   return audio_pipeline_layout_limit_impl(q, position, bytes, capacity, true);
 }
 #endif
