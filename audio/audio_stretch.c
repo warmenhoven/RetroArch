@@ -651,10 +651,10 @@ static void astretch_stream_pump(audio_stretch_stream_t *s,
       }
       if (s->phase == ASTRETCH_STREAM_ACTIVE)
       {
-         part.output = s + 1; part.output_capacity = s->hop;
          audio_stretch_process(s->engine, &part, tempo);
-         io->input_used += part.input_used; s->count = part.output_frames;
-         if (!s->count) break;
+         io->input_used += part.input_used;
+         io->output_frames += part.output_frames;
+         break;
       }
       else if (s->phase == ASTRETCH_STREAM_EXIT)
       {

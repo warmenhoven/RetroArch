@@ -1045,6 +1045,39 @@ static void bound_cases(void)
    }
 }
 
+static void adapter_direct_active(void)
+{
+   unsigned native, iteration;
+   for (native = 0; native < 2; native++)
+   {
+      audio_stretch_t *engine = audio_stretch_new(48000, 8, native, 1);
+      audio_stretch_stream_t *stream = audio_stretch_stream_new(48000, 8, native, 1);
+      size_t used = 0, frame = 8 * (native ? sizeof(float) : sizeof(int16_t));
+      const char *input = (const char*)(native ? (void*)input_f : (void*)input_i);
+      struct audio_stretch_io a, b;
+      fill(8);
+      guarded = 1;
+      for (iteration = 0; used < FRAMES && iteration < 10000; iteration++)
+      {
+         double tempo = iteration % 3 == 0 ? 0.5 : iteration % 3 == 1 ? 1.37 : 4;
+         a.input = input + used * frame;
+         a.input_frames = iteration ? (FRAMES - used > 97 ? 97 : FRAMES - used) : 256;
+         a.output_capacity = iteration % 3 == 0 ? 128 : iteration % 3 == 1 ? 1 : 511;
+         a.output = native ? (void*)output_f[0] : (void*)output_i[0];
+         b = a; b.output = native ? (void*)output_f[1] : (void*)output_i[1];
+         CHECK(audio_stretch_process(engine, &a, tempo));
+         CHECK(audio_stretch_stream_process(stream, &b, tempo, true));
+         CHECK(a.input_used == b.input_used && a.output_frames == b.output_frames);
+         CHECK(memcmp(a.output, b.output, a.output_frames * frame) == 0);
+         if (!iteration) CHECK(b.output_frames == 128);
+         used += a.input_used;
+      }
+      CHECK(used == FRAMES);
+      guarded = 0;
+      audio_stretch_free(engine); audio_stretch_stream_free(stream);
+   }
+}
+
 int main(void)
 {
    contracts();
@@ -1062,6 +1095,7 @@ int main(void)
    adapter_contracts();
    adapter_rapid();
    bound_cases();
+   adapter_direct_active();
    CHECK(heap_calls == 0);
    printf("stretch: %u failures, %u processing/reset heap calls\n", failures, heap_calls);
    return failures != 0;

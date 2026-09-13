@@ -118,7 +118,7 @@ short-write ownership, entry scheduling and listening acceptance remain pending.
 ## Stream adapter
 
 `audio_stretch_stream` owns the engine, transition owner and one hop of native
-staging. Construction performs three allocations; processing and reset perform
+exit staging. Construction performs three allocations; processing and reset perform
 none. All objects are single-consumer. The runtime must publish control changes
 to that consumer and call reset at a stream discontinuity; the adapter does not
 provide atomics, epoch publication or device I/O.
@@ -131,10 +131,11 @@ retained transition audio and returns to raw. A subsequent activation waits for
 this exit to finish. EOF drains without future input and latches until reset.
 Zero-capacity calls do not mutate state, including zero-capacity EOF queries.
 
-The adapter stages at most one hop between engine and transition owner, retaining
-partial progress and gap markers across output backpressure. This adds bounded
-native copies in active mode. The transition owner adds one hop of holdback in
-addition to the engine's lookahead. The runtime must retain produced audio until
+Active processing emits directly from the engine into caller output; its
+consumed/produced counts match direct engine calls. The adapter stages at most
+one hop during exit, retaining partial progress and gap markers across output
+backpressure. Exit handling retains the transition tail, but steady active
+processing adds no holdback beyond the engine's own lookahead. The runtime must retain produced audio until
 SRC/device consumers accept it; resetting or reprocessing a partially written
 output buffer is incorrect. Default inactive frontend paths must bypass the
 adapter entirely. No frontend setting is enabled by this patch.
@@ -161,8 +162,8 @@ and preserves the buffer binding. Rebind/unbind is allowed only in empty raw
 state. Direct process/flush reject a bound stream to prevent mixed ownership.
 
 The API adds a pointer and three size_t fields to adapter metadata (32 bytes on
-x86-64), no sample storage, allocations, copies or format conversions. Existing
-adapter staging/holdback costs still apply. The frontend can supply an existing
+x86-64), no sample storage, allocations, copies or format conversions. Exit
+staging/holdback costs still apply. The frontend can supply an existing
 sized arena slice. A downstream SRC must acknowledge source frames actually
 consumed; its produced device samples need their own short-write lifetime.
 This API does not itself change driver write behavior or publish stream epochs.
@@ -172,3 +173,13 @@ capacity against direct adapter output while accepting only 1..11 frames at a
 time, including zero acknowledgements and repeated pushes against pending data.
 EOF acceptance, reset, output canaries, invalid acknowledgements and forbidden
 API mixing are covered. Frontend/device integration remains outstanding.
+
+## Direct active output regression
+
+The active adapter now forwards the caller output span directly to the engine.
+A 256-frame startup at 48 kHz produces its first 128 frames immediately, without
+waiting for another engine hop to fill transition holdback. Tests compare each
+call's consumption, production and native samples against the engine across
+small output capacities and changing tempos. Drain/exit still supplies at least
+the engine's final overlap before its possible source-gap boundary, so the
+transition owner can retain the necessary outgoing tail during exit alone.
