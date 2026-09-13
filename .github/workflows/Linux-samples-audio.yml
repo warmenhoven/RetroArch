@@ -818,6 +818,10 @@ jobs:
         run: |
           make check SANITIZER=address,undefined
 
+      - name: Build and run native speed LPF tests (C89, ASan + UBSan)
+        working-directory: samples/audio/speed_lpf
+        run: make check SANITIZER=address,undefined
+
       - name: Build and run experimental sinc HQ tests (C89, ASan + UBSan)
         working-directory: samples/audio/sinc_hq
         run: |
