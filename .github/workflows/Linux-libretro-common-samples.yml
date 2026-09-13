@@ -183,6 +183,12 @@ jobs:
             # A benchmark, not a test: its numbers only mean something
             # on two dedicated physical cores, which a runner is not.
             queues/retro_spsc_bench
+            # The same, and for the same reason: it reports park and
+            # commit counts under contention, which a shared runner
+            # cannot produce meaningfully. It also builds a second
+            # binary, the scond variant, and being build-only covers
+            # both without naming either.
+            rthreads/retro_eventcount_bench
           )
 
           # Samples that are currently broken at build time on a stock
