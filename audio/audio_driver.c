@@ -4386,6 +4386,81 @@ static void audio_driver_pipeline_retry(audio_driver_state_t *audio_st)
    }
 }
 
+/* Caller owns this native block and has resolved pending device output.
+ * Wide source must not overlap the stereo scratch used for channel splitting. */
+static void audio_driver_pipeline_render(audio_driver_state_t *audio_st,
+      const void *source, size_t have, uint32_t layout, int snap)
+{
+   const void *front = source;
+   audio_driver_state_lock();
+   if (audio_st->pipe_channels > 2)
+   {
+      const unsigned pc = audio_st->pipe_channels;
+      uint32_t pos      = layout & ~AUDIO_LAYOUT_STEREO;
+      unsigned ex       = audio_layout_channels(pos);
+      unsigned slot[AUDIO_PIPE_CANON_CHANNELS];
+      unsigned bit, n = 0;
+      size_t f; unsigned c;
+      for (bit = 2; bit < pc; bit++)
+         if (pos & (1u << bit))
+            slot[n++] = bit;
+      if (ex && audio_driver_extra_prepare(audio_st, ex, pos,
+               have, audio_st->pipe_float, audio_driver_mixer_use_s16(audio_st->pipe_float)))
+      {
+         if (audio_st->pipe_float)
+         {
+            const float *w = (const float*)source;
+            float *fr = (float*)audio_st->pipe_scratch;
+            for (f = 0; f < have; f++)
+            {
+               fr[2 * f]     = w[f * pc];
+               fr[2 * f + 1] = w[f * pc + 1];
+               for (c = 0; c < ex; c++)
+                  audio_st->extra.in_f[f * ex + c] = w[f * pc + slot[c]];
+            }
+         }
+         else
+         {
+            const int16_t *w = (const int16_t*)source;
+            int16_t *fr = (int16_t*)audio_st->pipe_scratch;
+            for (f = 0; f < have; f++)
+            {
+               fr[2 * f]     = w[f * pc];
+               fr[2 * f + 1] = w[f * pc + 1];
+               for (c = 0; c < ex; c++)
+                  audio_st->extra.in_i[f * ex + c] = w[f * pc + slot[c]];
+            }
+         }
+         audio_st->extra.pending = true;
+      }
+      else
+      {
+         /* stereo in the wide frame, or no room for the extras: the
+          * fronts alone */
+         if (audio_st->pipe_float)
+         {
+            const float *w = (const float*)source;
+            float *fr = (float*)audio_st->pipe_scratch;
+            for (f = 0; f < have; f++) { fr[2 * f] = w[f * pc]; fr[2 * f + 1] = w[f * pc + 1]; }
+         }
+         else
+         {
+            const int16_t *w = (const int16_t*)source;
+            int16_t *fr = (int16_t*)audio_st->pipe_scratch;
+            for (f = 0; f < have; f++) { fr[2 * f] = w[f * pc]; fr[2 * f + 1] = w[f * pc + 1]; }
+         }
+      }
+      front = audio_st->pipe_scratch;
+   }
+   audio_driver_flush(audio_st,
+         config_get_ptr()->floats.slowmotion_ratio,
+         front, have * 2, audio_st->pipe_float,
+         (snap & AUDIO_SNAP_SLOWMOTION) ? true : false,
+         (snap & AUDIO_SNAP_FASTMOTION) ? true : false);
+   audio_st->extra.pending = false;
+   audio_driver_state_unlock();
+}
+
 /**
  * audio_driver_pipeline_consume:
  *
@@ -4401,6 +4476,7 @@ static void audio_driver_pipeline_consume(audio_driver_state_t *audio_st)
    int      snap;
    double   out_ratio;
    size_t   frame_bytes, out_bytes, have;
+   void    *source;
    const audio_driver_t *audio = audio_st->current_audio;
 
    if (audio_st->pipe_pending_bytes)
@@ -4630,73 +4706,8 @@ static void audio_driver_pipeline_consume(audio_driver_state_t *audio_st)
    if (!audio->wait_writable(audio_st->context_audio_data, out_bytes))
       return;
 
-   if (audio_st->pipe_channels > 2)
-   {
-      /* This pass ends before the next layout boundary. */
-      const unsigned pc = audio_st->pipe_channels;
-      uint32_t layout   = audio_st->pipe_layouts.current_layout;
-      uint32_t pos      = layout & ~AUDIO_LAYOUT_STEREO;
-      unsigned ex       = audio_layout_channels(pos);
-      unsigned slot[AUDIO_PIPE_CANON_CHANNELS];
-      unsigned bit, n = 0;
-      size_t f; unsigned c;
-      for (bit = 2; bit < pc; bit++)
-         if (pos & (1u << bit))
-            slot[n++] = bit;
-      retro_spsc_read(&audio_st->pipe_ring, audio_st->pipe_wide,
-            have * audio_st->pipe_frame_bytes);
-      audio_driver_state_lock();
-      if (ex && audio_driver_extra_prepare(audio_st, ex, pos,
-               have, audio_st->pipe_float, audio_driver_mixer_use_s16(audio_st->pipe_float)))
-      {
-         if (audio_st->pipe_float)
-         {
-            const float *w = (const float*)audio_st->pipe_wide;
-            float *fr = (float*)audio_st->pipe_scratch;
-            for (f = 0; f < have; f++)
-            {
-               fr[2 * f]     = w[f * pc];
-               fr[2 * f + 1] = w[f * pc + 1];
-               for (c = 0; c < ex; c++)
-                  audio_st->extra.in_f[f * ex + c] = w[f * pc + slot[c]];
-            }
-         }
-         else
-         {
-            const int16_t *w = (const int16_t*)audio_st->pipe_wide;
-            int16_t *fr = (int16_t*)audio_st->pipe_scratch;
-            for (f = 0; f < have; f++)
-            {
-               fr[2 * f]     = w[f * pc];
-               fr[2 * f + 1] = w[f * pc + 1];
-               for (c = 0; c < ex; c++)
-                  audio_st->extra.in_i[f * ex + c] = w[f * pc + slot[c]];
-            }
-         }
-         audio_st->extra.pending = true;
-      }
-      else
-      {
-         /* stereo in the wide frame, or no room for the extras: the
-          * fronts alone */
-         if (audio_st->pipe_float)
-         {
-            const float *w = (const float*)audio_st->pipe_wide;
-            float *fr = (float*)audio_st->pipe_scratch;
-            for (f = 0; f < have; f++) { fr[2 * f] = w[f * pc]; fr[2 * f + 1] = w[f * pc + 1]; }
-         }
-         else
-         {
-            const int16_t *w = (const int16_t*)audio_st->pipe_wide;
-            int16_t *fr = (int16_t*)audio_st->pipe_scratch;
-            for (f = 0; f < have; f++) { fr[2 * f] = w[f * pc]; fr[2 * f + 1] = w[f * pc + 1]; }
-         }
-      }
-      audio_driver_state_unlock();
-   }
-   else
-      retro_spsc_read(&audio_st->pipe_ring, audio_st->pipe_scratch,
-            have * audio_st->pipe_frame_bytes);
+   source = audio_st->pipe_channels > 2 ? audio_st->pipe_wide : audio_st->pipe_scratch;
+   retro_spsc_read(&audio_st->pipe_ring, source, have * audio_st->pipe_frame_bytes);
 
    /* Let a throttled producer know ring space has opened - and that
     * the device is draining again, if it had been found stalled. */
@@ -4706,14 +4717,8 @@ static void audio_driver_pipeline_consume(audio_driver_state_t *audio_st)
    scond_signal(audio_st->pipe_cond);
    slock_unlock(audio_st->pipe_lock);
 
-   audio_driver_state_lock();
-   audio_driver_flush(audio_st,
-         config_get_ptr()->floats.slowmotion_ratio,
-         audio_st->pipe_scratch, have * 2, audio_st->pipe_float,
-         (snap & AUDIO_SNAP_SLOWMOTION) ? true : false,
-         (snap & AUDIO_SNAP_FASTMOTION) ? true : false);
-   audio_st->extra.pending = false;
-   audio_driver_state_unlock();
+   audio_driver_pipeline_render(audio_st, source,
+         have, audio_st->pipe_layouts.current_layout, snap);
 }
 #endif
 

@@ -25,6 +25,8 @@ SOURCES_C := \
 	stubs_retroarch.c \
 	../../../audio/drivers_resampler/cc_resampler.c \
 	../../../audio/drivers_resampler/cc_resampler_int16.c \
+	../../../audio/audio_stretch.c \
+	../../../audio/audio_pipeline_stretch.c \
 	../../../audio/audio_upmix.c \
 	../../../audio/audio_binaural.c \
 	$(LIBRETRO_COMM_DIR)/lists/string_list.c \

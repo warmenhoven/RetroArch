@@ -25,6 +25,7 @@
 #include "fake_wasapi.h"
 
 #include "../../../audio/audio_driver.c"
+#include "../../../audio/audio_pipeline_stretch.h"
 
 extern audio_driver_t audio_wasapi;
 
@@ -1389,6 +1390,149 @@ static void resampler_discontinuity_cases(void)
 }
 
 
+/* Real queue/WSOLA output handed directly to the shipping frontend renderer. */
+static void native_render_case(bool floating, bool wide, bool hq)
+{
+   static union { float f[2048 * 11]; int16_t i[2048 * 11]; } input;
+   union { float f[257 * 11]; int16_t i[257 * 11]; } output, saved;
+   static const uint32_t layouts[] = { AUDIO_LAYOUT_5POINT1, AUDIO_LAYOUT_7POINT1,
+      AUDIO_LAYOUT_STEREO, AUDIO_LAYOUT_5POINT1 };
+   static const uint32_t tempos[] = { 65536, 90112, 32768, 262144 };
+   audio_driver_state_t *st = &audio_driver_st;
+   float *reference = NULL;
+   size_t reference_frames = 0;
+   unsigned fragmented;
+   for (fragmented = 0; fragmented < 2; fragmented++)
+   {
+      audio_pipeline_stretch_t *stage;
+      struct audio_pipeline_stretch_block block;
+      unsigned channels = wide ? 11 : 2, segment, c, iterations = 0;
+      size_t frame = channels * (floating ? sizeof(float) : sizeof(int16_t));
+      size_t used = 0, f;
+      uint32_t serial = 0;
+      bool complete = false;
+      CHECK(pipe_up(floating, floating), "native renderer stand-up");
+      free(cap); cap = NULL; cap_cap = cap_frames = 0;
+      if (!wide)
+      {
+         st->pipe_channels = dev_channels = st->out_channels = 2;
+         st->pipe_frame_bytes = frame;
+         dev_layout = st->out_layout = AUDIO_LAYOUT_STEREO;
+      }
+      st->src_ratio_orig = st->src_ratio_curr = hq ? 2.0 : 48000.0 / 44100.0;
+      st->resampler_hq = hq;
+      CHECK(retro_resampler_realloc_hq(&st->resampler_data, &st->resampler,
+            "sinc", st->resampler_quality, st->src_ratio_orig, hq), "native renderer SRC");
+      if (!floating)
+      {
+         config_get_ptr()->bools.audio_fastpath_s16 = true;
+         st->resampler_data_int16 = audio_driver_int16_resampler_new(st);
+         st->resampler_int16_process = sinc_resampler_int16_process;
+         st->resampler_int16_free = sinc_resampler_int16_free;
+         st->resampler_int16_reset = sinc_resampler_int16_reset;
+         CHECK(st->resampler_data_int16 != NULL, "native renderer integer SRC");
+      }
+      stage = audio_pipeline_stretch_new(48000, channels, floating, 1,
+            &st->pipe_ring, &st->pipe_layouts, &output, 257);
+      CHECK(stage != NULL, "native renderer stage");
+      if (!stage) { free(reference); return; }
+      for (segment = 0; segment < 4; segment++)
+      {
+         uint32_t layout = wide ? layouts[segment] : AUDIO_LAYOUT_STEREO;
+         CHECK(audio_pipeline_layout_publish_transport(&st->pipe_layouts,
+                  segment * 512 * frame, layout, tempos[segment], segment != 0,
+                  segment == 2), "native renderer control publication");
+         for (f = segment * 512; f < (segment + 1) * 512; f++)
+            for (c = 0; c < channels; c++)
+            {
+               int16_t value = layout & (1u << c)
+                  ? (int16_t)((int)((f * 7919 + c * 977) % 30000) - 15000) : 0;
+               if (floating) input.f[f * channels + c] = value / 32768.0f;
+               else input.i[f * channels + c] = value;
+            }
+      }
+      CHECK(retro_spsc_write_frames(&st->pipe_ring, &input, 2048, frame) == 2048,
+            "native renderer source publication");
+      if (fragmented)
+      {
+         scripted_threaded.write = short_device_write;
+         scripted_threaded.wait_writable = short_device_wait;
+      }
+      short_calls = 0;
+      short_zero = fragmented;
+      short_fail = short_no_room = false;
+      cap_frames = 0;
+      while (!complete || st->pipe_pending_bytes)
+      {
+         size_t accepted, tail;
+         if (++iterations > 100000) abort();
+         if (st->pipe_pending_bytes)
+         {
+            tail = retro_atomic_load_relaxed_size(&st->pipe_ring.tail);
+            short_zero = false;
+            audio_driver_pipeline_retry(st);
+            CHECK(retro_atomic_load_relaxed_size(&st->pipe_ring.tail) == tail,
+                  "device retry consumed new native source");
+            continue;
+         }
+         if (used == 2048)
+            CHECK(audio_pipeline_stretch_finish(stage, fragmented ? 97 : 257, &block, &complete), "native renderer finish");
+         else
+            CHECK(audio_pipeline_stretch_next(stage, fragmented ? 71 : 512,
+                     fragmented ? 97 : 257, &block), "native renderer next");
+         used += block.input_used;
+         if (serial != block.reset_serial)
+         {
+            audio_driver_state_lock();
+            audio_driver_reset_resamplers(st);
+            audio_driver_state_unlock();
+            serial = block.reset_serial;
+         }
+         accepted = fragmented && block.frames > 37 ? 37 : block.frames;
+         if (accepted)
+         {
+            memcpy(&saved, block.data, accepted * frame);
+            audio_driver_pipeline_render(st, block.data, accepted, block.layout, 0);
+            CHECK(!memcmp(&saved, block.data, accepted * frame), "renderer modified owned native input");
+            CHECK(st->stat_core_is_float == floating, "renderer changed source format");
+            CHECK(st->stat_frontend_is_float == floating, "renderer left the native frontend lane");
+         }
+         if (block.passthrough) used += accepted;
+         CHECK(audio_pipeline_stretch_consume(stage, accepted), "native renderer acknowledge");
+      }
+      CHECK(used == 2048 && !retro_spsc_read_avail(&st->pipe_ring), "native renderer source count");
+      CHECK(cap_frames > 0, "native renderer produced no audio");
+      if (!fragmented)
+      {
+         reference_frames = cap_frames;
+         reference = (float*)malloc(cap_frames * dev_channels * sizeof(float));
+         CHECK(reference != NULL, "native renderer reference");
+         if (reference) memcpy(reference, cap, cap_frames * dev_channels * sizeof(float));
+      }
+      else
+      {
+         CHECK(short_calls > 2, "native renderer did not exercise retries");
+         CHECK(cap_frames == reference_frames, "native renderer duration differs");
+         if (reference && cap_frames == reference_frames)
+            CHECK(!memcmp(reference, cap, cap_frames * dev_channels * sizeof(float)),
+                  "fragmented native render differs: float=%u wide=%u HQ=%u", floating, wide, hq);
+      }
+      audio_pipeline_stretch_free(stage);
+   }
+   config_get_ptr()->bools.audio_fastpath_s16 = false;
+   short_zero = false;
+   free(reference);
+}
+
+static void native_render_cases(void)
+{
+   unsigned floating, wide, hq, before = failures;
+   for (floating = 0; floating < 2; floating++)
+      for (wide = 0; wide < 2; wide++)
+         for (hq = 0; hq < 2; hq++) native_render_case(floating, wide, hq);
+   printf("native WSOLA frontend render: 16 runs, %u failures\n", failures - before);
+}
+
 int main(void)
 {
    /* One case at a time, for when a single one is being worked on:
@@ -1396,6 +1540,7 @@ int main(void)
    const char *only = getenv("DM_ONLY");
 #define RUN(tag, call) do { if (!only || strstr(only, tag)) { call; } } while (0)
    printf("discrete multi-channel:\n");
+   RUN("nativerender", native_render_cases());
    RUN("srcreset", resampler_discontinuity_cases());
    RUN("suspended", suspended_multichannel_case(true, true));
    RUN("suspended", suspended_multichannel_case(false, true));
