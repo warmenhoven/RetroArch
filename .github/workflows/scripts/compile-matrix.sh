@@ -142,6 +142,9 @@ arm "emscripten" emscripten "-D__EMSCRIPTEN__"
 platform_video "odroidgo2 video" \
    "-DHAVE_ODROIDGO2 -DHAVE_OPENGL -DHAVE_GLSL" "" \
    gfx/drivers/gl2.c ""
+platform_video "switch video" \
+   "-DHAVE_LIBNX -DSWITCH -D__SWITCH__" "-I$STUBS/libnx" \
+   gfx/drivers/switch_nx_gfx.c ""
 platform_video "dingux video"   "-DDINGUX" "-I/usr/include/SDL" \
    gfx/drivers/sdl_dingux_gfx.c /usr/include/SDL/SDL.h
 platform_video "rs90 video"     "-DDINGUX -DRS90" "-I/usr/include/SDL" \
