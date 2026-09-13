@@ -301,3 +301,11 @@ audio_mixer_sound_t *audio_mixer_load_ac3(void *buffer, size_t size)
 struct defaults g_defaults;
 
 bool state_manager_frame_is_reversed(void) { return false; }
+
+/* These fixtures have no wrapper worker; control runs synchronously. */
+void audio_thread_apply_control(void *data,
+      void (*control)(void *userdata), void *userdata)
+{
+   (void)data;
+   if (control) control(userdata);
+}

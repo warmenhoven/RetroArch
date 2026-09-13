@@ -1,8 +1,19 @@
 #define audio_init_thread unused_audio_init_thread
+#define audio_thread_apply_control unused_audio_thread_apply_control
 #define command_event unused_command_event
 #include "../pipeline_clocked/stubs_retroarch.c"
 #undef audio_init_thread
+#undef audio_thread_apply_control
 #undef command_event
+
+unsigned pipeline_control_calls;
+void audio_thread_apply_control(void *data,
+      void (*control)(void *userdata), void *userdata)
+{
+   (void)data;
+   pipeline_control_calls++;
+   control(userdata);
+}
 
 /* Run the real initialization and pipeline, scheduling passes explicitly. */
 bool audio_init_thread(const audio_driver_t **out_driver, void **out_data,

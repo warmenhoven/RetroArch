@@ -6415,26 +6415,35 @@ void audio_driver_set_core_multi(bool core_multi)
    audio_driver_st.core_multi = core_multi;
 }
 
+#ifdef HAVE_THREADS
+static void audio_driver_pipe_set_format(void *userdata)
+{
+   audio_driver_state_t *audio_st = (audio_driver_state_t*)userdata;
+   /* Empty source alone is not quiescence: the wrapper must also be parked. */
+   if (!retro_spsc_read_avail(&audio_st->pipe_ring))
+   {
+      audio_st->pipe_float = audio_st->core_float;
+      audio_st->pipe_frame_bytes = (size_t)audio_st->pipe_channels
+            * (audio_st->pipe_float ? sizeof(float) : sizeof(int16_t));
+   }
+}
+#endif
+
 void audio_driver_set_core_float(bool core_float)
 {
    audio_driver_state_t *audio_st = &audio_driver_st;
    audio_st->core_float = core_float;
 #ifdef HAVE_THREADS
-   /* The negotiation may land after the pipe was set up, before any
-    * audio has flowed: an empty ring takes the format then. A ring
-    * with audio in it keeps its format, and the other is converted. */
-   if (     audio_st->pipe_threaded && audio_st->pipe_float != core_float
-         && retro_spsc_read_avail(&audio_st->pipe_ring) == 0)
+   if (audio_st->pipe_threaded && audio_st->pipe_float != core_float)
    {
-      audio_st->pipe_float       = core_float;
-      /* Against the width the ring was built for, not a stereo frame:
-       * a core that took the multi-channel entry has a ring of the
-       * canonical wide frame, and assuming two slots here left the
-       * stride disagreeing with the width it was built at. The ring
-       * is not rebuilt, only the format it carries is taken, so the
-       * width is the one already in pipe_channels. */
-      audio_st->pipe_frame_bytes = (size_t)audio_st->pipe_channels
-            * (core_float ? sizeof(float) : sizeof(int16_t));
+      /* A populated ring keeps its native format. Recheck after parking,
+       * since the consumer may finish its last source while we wait. */
+      if (audio_st->current_audio &&
+            string_is_equal(audio_st->current_audio->ident, "audio-thread"))
+         audio_thread_apply_control(audio_st->context_audio_data,
+               audio_driver_pipe_set_format, audio_st);
+      else
+         audio_driver_pipe_set_format(audio_st);
    }
 #endif
 }

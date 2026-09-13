@@ -10,6 +10,7 @@ static int16_t source_i[FRAMES * 2];
 static float captured[FRAMES * 2];
 static size_t captured_samples, device_bytes;
 static unsigned failures;
+extern unsigned pipeline_control_calls;
 
 static void *test_init(const char *device, unsigned rate, unsigned latency,
       unsigned *new_rate)
@@ -147,7 +148,15 @@ static void wide_then_float_case(void)
    }
 
    /* And the float entry lands afterwards, on an empty ring. */
-   audio_driver_set_core_float(true);
+   {
+      audio_driver_t wrapper = *st->current_audio;
+      const audio_driver_t *saved = st->current_audio;
+      wrapper.ident = "audio-thread";
+      st->current_audio = &wrapper;
+      audio_driver_set_core_float(true);
+      if (pipeline_control_calls != 1) failures++;
+      st->current_audio = saved;
+   }
 
    want = (size_t)st->pipe_channels * sizeof(float);
    if (st->pipe_frame_bytes != want)
@@ -162,6 +171,18 @@ static void wide_then_float_case(void)
       printf("wide+float: stride %u bytes for a %u-slot frame\n",
             (unsigned)st->pipe_frame_bytes, st->pipe_channels);
 
+   /* Queued native samples cannot be reinterpreted by negotiation. */
+   {
+      float frame[AUDIO_PIPE_CANON_CHANNELS];
+      size_t bytes = st->pipe_frame_bytes;
+      memset(frame, 0, sizeof(frame));
+      if (retro_spsc_write(&st->pipe_ring, frame, bytes) != bytes) abort();
+      audio_driver_set_core_float(false);
+      if (!st->pipe_float || st->pipe_frame_bytes != bytes) failures++;
+      retro_spsc_skip(&st->pipe_ring, bytes);
+      audio_driver_set_core_float(false);
+      if (st->pipe_float || st->pipe_frame_bytes != AUDIO_PIPE_CANON_CHANNELS * sizeof(int16_t)) failures++;
+   }
    audio_driver_set_core_multi(false);
    audio_driver_set_core_float(false);
 }

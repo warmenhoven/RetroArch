@@ -310,6 +310,22 @@ static bool audio_thread_alive(void *data)
    return alive;
 }
 
+void audio_thread_apply_control(void *data,
+      void (*control)(void *userdata), void *userdata)
+{
+   audio_thread_t *thr = (audio_thread_t*)data;
+   bool running;
+   if (!thr || !control)
+      return;
+   slock_lock(thr->lock);
+   running = !thr->stopped;
+   slock_unlock(thr->lock);
+   audio_thread_block(thr);
+   control(userdata);
+   if (running)
+      audio_thread_unblock(thr);
+}
+
 static bool audio_thread_stop(void *data)
 {
    audio_thread_t *thr = (audio_thread_t*)data;
