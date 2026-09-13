@@ -90,7 +90,7 @@ static unsigned search_oracle(const audio_stretch_t *s)
 int main(void)
 {
    static const unsigned rates[] = {8000, 11025, 32000, 44100, 48000, 96000, 192000};
-   static const unsigned channels[] = {1, 2, 6, 8};
+   static const unsigned channels[] = {1, 2, 6, 8, 11};
    unsigned r, ch, lane, head, next, pattern, f, c;
    for (r = 0; r < sizeof(rates) / sizeof(rates[0]); r++)
       for (ch = 0; ch < sizeof(channels) / sizeof(channels[0]); ch++)

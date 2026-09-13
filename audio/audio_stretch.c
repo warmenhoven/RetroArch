@@ -177,7 +177,8 @@ audio_stretch_t *audio_stretch_new(unsigned rate, unsigned channels,
    unsigned hop, radius, capacity, f;
    size_t sample, native_bytes, bytes;
    char *p;
-   if (rate < 8000 || rate > 192000 || !channels || channels > 8
+   if (rate < 8000 || rate > 192000 || !channels
+         || channels > AUDIO_STRETCH_MAX_CHANNELS
          || !search_channels || (search_channels >> channels)) return NULL;
    hop = (rate + 187) / 375;
    radius = hop / 2;
@@ -372,7 +373,8 @@ bool audio_stretch_crossfade(void *output, const void *outgoing,
 {
    unsigned denominator, weight, step, carry, remainder, c;
    size_t f, sample;
-   if (!channels || channels > 8 || !total || total > 65536
+   if (!channels || channels > AUDIO_STRETCH_MAX_CHANNELS
+         || !total || total > 65536
          || offset > total || frames > total - offset
          || (frames && (!output || !outgoing || !incoming))) return false;
    if (!frames) return true;
@@ -428,7 +430,8 @@ audio_stretch_transition_t *audio_stretch_transition_new(unsigned channels,
 {
    audio_stretch_transition_t *s;
    size_t frame;
-   if (!channels || channels > 8 || !tail_frames || tail_frames > 65536)
+   if (!channels || channels > AUDIO_STRETCH_MAX_CHANNELS
+         || !tail_frames || tail_frames > 65536)
       return NULL;
    frame = channels * (is_float ? sizeof(float) : sizeof(int16_t));
    s = (audio_stretch_transition_t*)calloc(1, sizeof(*s) + tail_frames * frame);
@@ -586,7 +589,8 @@ audio_stretch_stream_t *audio_stretch_stream_new(unsigned rate, unsigned channel
    audio_stretch_stream_t *s;
    unsigned hop;
    size_t frame;
-   if (rate < 8000 || rate > 192000 || !channels || channels > 8
+   if (rate < 8000 || rate > 192000 || !channels
+         || channels > AUDIO_STRETCH_MAX_CHANNELS
          || !search_channels || (search_channels >> channels)) return NULL;
    hop = (rate + 187) / 375;
    frame = channels * (is_float ? sizeof(float) : sizeof(int16_t));

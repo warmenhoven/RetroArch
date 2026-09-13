@@ -23,6 +23,8 @@
 
 RETRO_BEGIN_DECLS
 
+#define AUDIO_STRETCH_MAX_CHANNELS 11
+
 typedef struct audio_stretch audio_stretch_t;
 
 struct audio_stretch_io
@@ -47,8 +49,8 @@ struct audio_stretch_drain_io
 };
 
 /* Single-owner engine, interleaved native float or int16 throughout.
- * Rate: 8000..192000 Hz; channels: 1..8. search_channels is a nonzero
- * mask of channel indices, with LFE excluded by the caller. */
+ * Rate: 8000..192000 Hz; channels: 1..11 (including canonical pipeline slots).
+ * search_channels is a nonzero mask of channel indices; exclude LFE. */
 audio_stretch_t *audio_stretch_new(unsigned rate, unsigned channels,
       bool is_float, uint32_t search_channels);
 void audio_stretch_free(audio_stretch_t *state);

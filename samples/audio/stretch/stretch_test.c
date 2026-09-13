@@ -23,8 +23,8 @@ void __wrap_free(void *p) { if (guarded) heap_calls++; __real_free(p); }
 #define CHECK(x) do { if (!(x)) { if (failures < 20) printf("FAIL %u: %s\n", (unsigned)__LINE__, #x); failures++; } } while (0)
 #define FRAMES 8192
 #define OUT_FRAMES (FRAMES * 4)
-static float input_f[FRAMES * 8], output_f[2][OUT_FRAMES * 8];
-static int16_t input_i[FRAMES * 8], output_i[2][OUT_FRAMES * 8];
+static float input_f[FRAMES * AUDIO_STRETCH_MAX_CHANNELS], output_f[2][OUT_FRAMES * AUDIO_STRETCH_MAX_CHANNELS];
+static int16_t input_i[FRAMES * AUDIO_STRETCH_MAX_CHANNELS], output_i[2][OUT_FRAMES * AUDIO_STRETCH_MAX_CHANNELS];
 
 static void fill(unsigned channels)
 {
@@ -93,10 +93,10 @@ static size_t run(audio_stretch_t *s, unsigned channels, int floating,
 
 static void stream_cases(void)
 {
-   const unsigned widths[] = {2, 6, 8};
+   const unsigned widths[] = {2, 6, 8, 11};
    const double tempos[] = {0.25, 0.5, 1, 1.37, 2, 32};
    unsigned c, t, floating, f;
-   for (c = 0; c < 3; c++)
+   for (c = 0; c < sizeof(widths) / sizeof(widths[0]); c++)
       for (floating = 0; floating < 2; floating++)
       {
          unsigned channels = widths[c];
@@ -183,19 +183,22 @@ static void contracts(void)
    memcpy(&nan, &nan_bits, sizeof(nan));
    CHECK(!audio_stretch_new(7999, 2, false, 3));
    CHECK(!audio_stretch_new(192001, 2, false, 3));
-   CHECK(!audio_stretch_new(48000, 9, false, 3));
+   CHECK(!audio_stretch_new(48000, AUDIO_STRETCH_MAX_CHANNELS + 1, false, 3));
    CHECK(!audio_stretch_new(48000, 2, false, 0));
    CHECK(!audio_stretch_new(48000, 2, false, 4));
+   CHECK(!audio_stretch_new(48000, AUDIO_STRETCH_MAX_CHANNELS, false,
+            1u << AUDIO_STRETCH_MAX_CHANNELS));
+   CHECK(!audio_stretch_new(48000, (unsigned)-1, false, 1));
    fail_init = 1; CHECK(!audio_stretch_new(48000, 2, false, 3)); fail_init = 0;
    for (r = 0; r < 5; r++)
-      for (c = 2; c <= 8; c += 2)
+      for (c = 2; c <= AUDIO_STRETCH_MAX_CHANNELS; c++)
          for (floating = 0; floating < 2; floating++)
          {
             s = audio_stretch_new(rates[r], c, floating, 1);
             CHECK(s != NULL);
             if (!s) exit(2);
             CHECK(audio_stretch_hop(s) >= 21 && audio_stretch_hop(s) <= 512);
-            CHECK(audio_stretch_storage(s) < 100000);
+            CHECK(audio_stretch_storage(s) < (c <= 8 ? 100000 : 131072));
             if (c != 4) printf("storage rate=%u ch=%u float=%u bytes=%lu\n", rates[r], c, floating, (unsigned long)audio_stretch_storage(s));
             audio_stretch_free(s);
          }
@@ -233,7 +236,7 @@ static void edge_rates(void)
    unsigned r, floating, c;
    for (r = 0; r < 3; r++)
       for (floating = 0; floating < 2; floating++)
-         for (c = 1; c <= 8; c += 7)
+         for (c = 1; c <= AUDIO_STRETCH_MAX_CHANNELS; c += c == 1 ? 7 : 3)
          {
             audio_stretch_t *s = audio_stretch_new(rates[r], c, floating, 1);
             size_t a, b;
@@ -388,8 +391,8 @@ static size_t drain_run(audio_stretch_t *s, unsigned channels, int floating,
 static size_t prepare_drain(audio_stretch_t *s, unsigned channels, int floating,
       unsigned scenario, size_t *prefix)
 {
-   static float scratch_f[6 * 512 * 8];
-   static int16_t scratch_i[6 * 512 * 8];
+   static float scratch_f[6 * 512 * AUDIO_STRETCH_MAX_CHANNELS];
+   static int16_t scratch_i[6 * 512 * AUDIO_STRETCH_MAX_CHANNELS];
    unsigned hop = audio_stretch_hop(s);
    size_t frame = channels * (floating ? sizeof(float) : sizeof(int16_t));
    size_t used;
@@ -424,10 +427,10 @@ static size_t prepare_drain(audio_stretch_t *s, unsigned channels, int floating,
 static void drain_cases(void)
 {
    const unsigned rates[] = {8000, 48000, 192000};
-   const unsigned widths[] = {1, 6, 8};
+   const unsigned widths[] = {1, 6, 8, 11};
    unsigned r, w, floating, scenario, f, c;
    for (r = 0; r < 3; r++)
-      for (w = 0; w < 3; w++)
+      for (w = 0; w < sizeof(widths) / sizeof(widths[0]); w++)
          for (floating = 0; floating < 2; floating++)
          {
             unsigned channels = widths[w];
@@ -490,19 +493,19 @@ static void drain_cases(void)
 
 static void crossfade_cases(void)
 {
-   static float a[65536 * 8], b[65536 * 8], out[65536 * 8 + 1], part[65536 * 8 + 1];
-   static int16_t ai[65536 * 8], bi[65536 * 8], oi[65536 * 8 + 1], pi[65536 * 8 + 1];
+   static float a[65536 * AUDIO_STRETCH_MAX_CHANNELS], b[65536 * AUDIO_STRETCH_MAX_CHANNELS], out[65536 * AUDIO_STRETCH_MAX_CHANNELS + 1], part[65536 * AUDIO_STRETCH_MAX_CHANNELS + 1];
+   static int16_t ai[65536 * AUDIO_STRETCH_MAX_CHANNELS], bi[65536 * AUDIO_STRETCH_MAX_CHANNELS], oi[65536 * AUDIO_STRETCH_MAX_CHANNELS + 1], pi[65536 * AUDIO_STRETCH_MAX_CHANNELS + 1];
    static const unsigned lengths[] = {1, 2, 3, 21, 128, 512, 65536};
    unsigned l, channels, native;
    size_t k;
-   for (k = 0; k < 65536 * 8; k++)
+   for (k = 0; k < 65536 * AUDIO_STRETCH_MAX_CHANNELS; k++)
    {
       ai[k] = (int16_t)((int)(k % 65536) - 32768);
       bi[k] = (int16_t)(32767 - (int)(k % 65536));
       a[k] = ai[k] / 32768.0f; b[k] = bi[k] / 32768.0f;
    }
    for (l = 0; l < sizeof(lengths) / sizeof(lengths[0]); l++)
-      for (channels = 1; channels <= 8; channels++)
+      for (channels = 1; channels <= AUDIO_STRETCH_MAX_CHANNELS; channels++)
          for (native = 0; native < 2; native++)
          {
             unsigned total = lengths[l], offset = 0;
@@ -559,7 +562,7 @@ static void crossfade_cases(void)
    CHECK(oi[0] == 32767 && oi[1] == 32767 && oi[2] == 32767);
    oi[0] = 1234;
    CHECK(!audio_stretch_crossfade(oi, ai, bi, 1, 0, false, 0, 1));
-   CHECK(!audio_stretch_crossfade(oi, ai, bi, 1, 9, false, 0, 1));
+   CHECK(!audio_stretch_crossfade(oi, ai, bi, 1, AUDIO_STRETCH_MAX_CHANNELS + 1, false, 0, 1));
    CHECK(!audio_stretch_crossfade(oi, ai, bi, 1, 1, false, 0, 0));
    CHECK(!audio_stretch_crossfade(oi, ai, bi, 1, 1, false, 0, 65537));
    CHECK(!audio_stretch_crossfade(oi, ai, bi, 1, 1, false, 2, 1));
@@ -628,14 +631,14 @@ static size_t transition_run(unsigned channels, unsigned native, unsigned tail,
 
 static void transition_cases(void)
 {
-   static float expected_f[FRAMES * 8];
-   static int16_t expected_i[FRAMES * 8];
+   static float expected_f[FRAMES * AUDIO_STRETCH_MAX_CHANNELS];
+   static int16_t expected_i[FRAMES * AUDIO_STRETCH_MAX_CHANNELS];
    static const unsigned tails[] = {1, 3, 21, 128};
    unsigned channels, native, t, scenario;
    audio_stretch_transition_t *s;
    struct audio_stretch_io io;
    struct audio_stretch_drain_io drain;
-   for (channels = 1; channels <= 8; channels++)
+   for (channels = 1; channels <= AUDIO_STRETCH_MAX_CHANNELS; channels++)
    {
       fill(channels);
       for (native = 0; native < 2; native++)
@@ -678,7 +681,7 @@ static void transition_cases(void)
             }
    }
    CHECK(!audio_stretch_transition_new(0, false, 1));
-   CHECK(!audio_stretch_transition_new(9, false, 1));
+   CHECK(!audio_stretch_transition_new(AUDIO_STRETCH_MAX_CHANNELS + 1, false, 1));
    CHECK(!audio_stretch_transition_new(2, false, 0));
    CHECK(!audio_stretch_transition_new(2, false, 65537));
    fail_init = 1; CHECK(!audio_stretch_transition_new(2, false, 3)); fail_init = 0;
@@ -704,10 +707,10 @@ static void transition_cases(void)
 
 static void transition_drain_chain(void)
 {
-   static float expected_f[FRAMES * 8];
-   static int16_t expected_i[FRAMES * 8];
+   static float expected_f[FRAMES * AUDIO_STRETCH_MAX_CHANNELS];
+   static int16_t expected_i[FRAMES * AUDIO_STRETCH_MAX_CHANNELS];
    unsigned channels, native, scenario;
-   for (channels = 1; channels <= 8; channels++)
+   for (channels = 1; channels <= AUDIO_STRETCH_MAX_CHANNELS; channels++)
       for (native = 0; native < 2; native++)
          for (scenario = 4; scenario <= 5; scenario++)
          {
@@ -812,7 +815,7 @@ static void adapter_cases(void)
    const double tempos[] = {0.5, 1.0, 1.37, 4.0, 32.0};
    unsigned r, channels, native, m, t;
    for (r = 0; r < 3; r++)
-      for (channels = 2; channels <= 8; channels += 6)
+      for (channels = 2; channels <= AUDIO_STRETCH_MAX_CHANNELS; channels += channels == 2 ? 6 : 3)
       {
          fill(channels);
          for (native = 0; native < 2; native++)
@@ -837,11 +840,11 @@ static void adapter_cases(void)
 
 static void adapter_reference(void)
 {
-   static float ref_f[OUT_FRAMES * 8];
-   static int16_t ref_i[OUT_FRAMES * 8];
+   static float ref_f[OUT_FRAMES * AUDIO_STRETCH_MAX_CHANNELS];
+   static int16_t ref_i[OUT_FRAMES * AUDIO_STRETCH_MAX_CHANNELS];
    const double tempos[] = {0.5, 1.0, 1.37};
    unsigned channels, native, t;
-   for (channels = 2; channels <= 8; channels += 6)
+   for (channels = 2; channels <= AUDIO_STRETCH_MAX_CHANNELS; channels += channels == 2 ? 6 : 3)
       for (native = 0; native < 2; native++)
          for (t = 0; t < 3; t++)
          {
@@ -898,7 +901,7 @@ static void adapter_contracts(void)
    unsigned n;
    int16_t output[8];
    CHECK(!audio_stretch_stream_new(7999, 2, false, 1));
-   CHECK(!audio_stretch_stream_new(48000, 9, false, 1));
+   CHECK(!audio_stretch_stream_new(48000, AUDIO_STRETCH_MAX_CHANNELS + 1, false, 1));
    CHECK(!audio_stretch_stream_new(48000, 2, false, 4));
    for (n = 1; n <= 3; n++)
    {
@@ -938,8 +941,8 @@ static void adapter_contracts(void)
 static size_t bound_run(unsigned rate, unsigned channels, unsigned native,
       double tempo, unsigned modes, unsigned capacity)
 {
-   float block_f[257 * 8 + 1];
-   int16_t block_i[257 * 8 + 1];
+   float block_f[257 * AUDIO_STRETCH_MAX_CHANNELS + 1];
+   int16_t block_i[257 * AUDIO_STRETCH_MAX_CHANNELS + 1];
    audio_stretch_stream_t *s = audio_stretch_stream_new(rate, channels, native, 1);
    void *block = native ? (void*)block_f : (void*)block_i;
    const char *input = (const char*)(native ? (void*)input_f : (void*)input_i);
@@ -1007,7 +1010,7 @@ static void bound_cases(void)
    const double tempos[] = {0.5, 4, 32};
    unsigned r, channels, native, c, t;
    for (r = 0; r < 3; r++)
-      for (channels = 2; channels <= 8; channels += 6)
+      for (channels = 2; channels <= AUDIO_STRETCH_MAX_CHANNELS; channels += channels == 2 ? 6 : 3)
       {
          fill(channels);
          for (native = 0; native < 2; native++)

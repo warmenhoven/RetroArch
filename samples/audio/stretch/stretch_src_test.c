@@ -5,12 +5,12 @@
 #include <audio/sinc_resampler.h>
 #include <audio/sinc_resampler_int16.h>
 
-union chain_buffer { float f[4096 * 8]; int16_t i[4096 * 8]; };
-static float sink_f[2][65536 * 8];
-static int16_t sink_i[2][65536 * 8];
+union chain_buffer { float f[4096 * AUDIO_STRETCH_MAX_CHANNELS]; int16_t i[4096 * AUDIO_STRETCH_MAX_CHANNELS]; };
+static float sink_f[2][65536 * AUDIO_STRETCH_MAX_CHANNELS];
+static int16_t sink_i[2][65536 * AUDIO_STRETCH_MAX_CHANNELS];
 struct chain
 {
-   void *resampler[4];
+   void *resampler[(AUDIO_STRETCH_MAX_CHANNELS + 1) / 2];
    unsigned channels, native, slot;
    size_t source, produced;
    double nominal;
@@ -25,7 +25,7 @@ static void chain_init(unsigned channels, unsigned native, unsigned slot,
    struct chain *s = &chain_state;
    memset(s, 0, sizeof(*s));
    s->channels = channels; s->native = native; s->slot = slot; s->nominal = ratio;
-   for (pair = 0; pair < channels / 2; pair++)
+   for (pair = 0; pair < (channels + 1) / 2; pair++)
    {
       if (native)
          s->resampler[pair] = sinc_resampler_init_hq(ratio,
@@ -56,13 +56,18 @@ static void chain_accept(const void *input, size_t frames)
       if (n > frames) n = frames;
       CHECK(n > 0);
       if (!n) return;
-      for (pair = 0; pair < s->channels / 2; pair++)
+      for (pair = 0; pair < (s->channels + 1) / 2; pair++)
       {
          size_t produced;
          memset(&s->pair_out, 0x5a, sizeof(s->pair_out));
          for (f = 0; f < n; f++)
-            memcpy((char*)&s->pair_in + f * 2 * sample,
-                  src + (f * s->channels + pair * 2) * sample, 2 * sample);
+            for (c = 0; c < 2; c++)
+            {
+               char *dst = (char*)&s->pair_in + (f * 2 + c) * sample;
+               if (pair * 2 + c < s->channels)
+                  memcpy(dst, src + (f * s->channels + pair * 2 + c) * sample, sample);
+               else memset(dst, 0, sample);
+            }
          if (s->native)
          {
             struct resampler_data io;
@@ -85,7 +90,7 @@ static void chain_accept(const void *input, size_t frames)
          for (f = output * 2 * sample; f < sizeof(s->pair_out); f++)
             CHECK(((unsigned char*)&s->pair_out)[f] == 0x5a);
          for (f = 0; f < output; f++)
-            for (c = 0; c < 2; c++)
+            for (c = 0; c < 2 && pair * 2 + c < s->channels; c++)
                memcpy((char*)&s->ready + (f * s->channels + 2 * pair + c) * sample,
                      (char*)&s->pair_out + (f * 2 + c) * sample, sample);
       }
@@ -109,7 +114,7 @@ static void chain_accept(const void *input, size_t frames)
 static size_t chain_free(void)
 {
    unsigned p;
-   for (p = 0; p < chain_state.channels / 2; p++)
+   for (p = 0; p < (chain_state.channels + 1) / 2; p++)
       if (chain_state.native) sinc_resampler.free(chain_state.resampler[p]);
       else sinc_resampler_int16_free(chain_state.resampler[p]);
    return chain_state.produced;
@@ -119,7 +124,7 @@ int main(void)
 {
    const double ratios[] = {0.75, 2.0, 4.0};
    unsigned channels, native, ratio, hq, capacity;
-   for (channels = 2; channels <= 8; channels += 6)
+   for (channels = 2; channels <= AUDIO_STRETCH_MAX_CHANNELS; channels += channels == 2 ? 6 : 3)
       for (native = 0; native < 2; native++)
          for (ratio = 0; ratio < 3; ratio++)
             for (hq = 0; hq < 2; hq++)
@@ -154,7 +159,7 @@ int main(void)
                   audio_stretch_stream_reset(stream);
                   CHECK(audio_stretch_stream_quiescent(stream));
                   CHECK(!audio_stretch_stream_peek(stream, &count) && !count);
-                  for (stage = 0; stage < channels / 2; stage++)
+                  for (stage = 0; stage < (channels + 1) / 2; stage++)
                      if (native) sinc_resampler.reset(chain_state.resampler[stage]);
                      else sinc_resampler_int16_reset(chain_state.resampler[stage]);
                   chain_state.source = chain_state.produced = 0;
