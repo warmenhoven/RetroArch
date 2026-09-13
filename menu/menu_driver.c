@@ -7652,7 +7652,7 @@ static int generic_menu_iterate(
                                  core_list
                               && path
                               && core_updater_list_get_filename(core_list,
-                                 path, &entry)
+                                 path, entry)
                               && (entry->description && *entry->description)
                            )
                            strlcpy(menu->menu_state_msg, entry->description,
@@ -7840,7 +7840,7 @@ static int generic_menu_iterate(
          break;
       case ITERATE_TYPE_DEFAULT:
          {
-            menu_entry_t entry;
+            menu_entry_t *entry = &menu_st->iterate_entry;
             menu_list_t *menu_list = menu_st->entries.list;
             size_t selection       = menu_st->selection_ptr;
             size_t menu_list_size  = menu_st->entries.list ? MENU_LIST_GET_SELECTION(menu_st->entries.list, 0)->size : 0;
@@ -7851,14 +7851,14 @@ static int generic_menu_iterate(
              * should not rely on a hack like this in order to work. */
             selection = MAX(MIN(selection, (menu_list_size - 1)), 0);
 
-            MENU_ENTRY_INITIALIZE(entry);
+            MENU_ENTRY_INITIALIZE((*entry));
             /* NOTE: If menu_entry_action() is modified,
              * will have to verify that these parameters
              * remain unused... */
-            entry.flags |= MENU_ENTRY_FLAG_PATH_ENABLED
+            entry->flags |= MENU_ENTRY_FLAG_PATH_ENABLED
                          | MENU_ENTRY_FLAG_LABEL_ENABLED;
-            menu_entry_get(&entry, 0, selection, NULL, false);
-            if ((ret = menu_entry_action(&entry,
+            menu_entry_get(entry, 0, selection, NULL, false);
+            if ((ret = menu_entry_action(entry,
                   selection, (enum menu_action)action)))
                return -1;
 

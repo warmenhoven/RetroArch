@@ -570,6 +570,12 @@ struct menu_state
    char input_dialog_kb_label[256];
 #endif
    unsigned char kb_key_state[RETROK_LAST];
+
+   /* The entry generic_menu_iterate() looks at once a frame. Here
+    * rather than on its stack: a menu_entry_t is 3872 bytes, which put
+    * that frame at 4312 where this tree allows four thousand. One is
+    * looked at a time, on the thread that iterates. */
+   menu_entry_t iterate_entry;
 };
 
 typedef struct menu_content_ctx_defer_info
