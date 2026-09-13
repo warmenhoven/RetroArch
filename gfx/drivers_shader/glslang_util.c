@@ -18,9 +18,6 @@
 
 #include <retro_miscellaneous.h>
 #include <compat/intrinsics.h>
-#include <file/file_path.h>
-#include <file/config_file.h>
-#include <streams/file_stream.h>
 #include <string/stdstring.h>
 
 #ifdef HAVE_CONFIG_H
@@ -431,7 +428,7 @@ static bool slang_include_cache_read(struct slang_include_cache *cache,
       }
    }
 
-   if (!filestream_read_file(path, (void**)&data, &n))
+   if (!video_shader_source_read(path, (char**)&data, &n))
       return false;
 
    if (cache && n > 0)
@@ -544,7 +541,7 @@ static bool glslang_read_shader_file_internal(const char *path,
    if (!path || path[0] == '\0' || !output)
       return false;
 
-   basename = path_basename_nocompression(path);
+   basename = video_shader_source_ident_name(path);
 
    if (!basename || basename[0] == '\0')
       return false;
@@ -588,7 +585,7 @@ static bool glslang_read_shader_file_internal(const char *path,
       /* If this is the 'parent' shader file and a slang file,
        * ensure that first line is a 'VERSION' string */
       bool check_version = root_file
-            && (strcmp(path_get_extension(path), "slang") == 0);
+            && video_shader_source_ident_is_slang(path);
 
       while (cursor < buf_end)
       {
@@ -718,8 +715,13 @@ static bool glslang_read_shader_file_internal(const char *path,
                }
 
                include_path[0] = '\0';
-               fill_pathname_resolve_relative(
-                     include_path, path, tmp, sizeof(include_path));
+               if (!video_shader_source_resolve(path, tmp,
+                        include_path, sizeof(include_path)))
+               {
+                  RARCH_ERR("[Slang] Could not resolve include \"%s\".\n",
+                        tmp);
+                  goto cleanup;
+               }
 
                if (!glslang_read_shader_file_internal(include_path, output,
                      false, include_optional, cache))

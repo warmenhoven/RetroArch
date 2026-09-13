@@ -1024,6 +1024,39 @@ static struct video_shader_parameter *video_shader_parse_find_parameter(
  * from the #pragma parameter lines in the shader for each pass.
  *
  **/
+bool video_shader_source_resolve(const char *parent, const char *name,
+      char *s, size_t len)
+{
+   if (!name || !*name || !s || !len)
+      return false;
+
+   s[0] = '\0';
+
+   /* No parent: the reference is already a name of its own. */
+   if (!parent || !*parent)
+   {
+      strlcpy(s, name, len);
+      return true;
+   }
+
+   fill_pathname_resolve_relative(s, parent, name, len);
+   return s[0] != '\0';
+}
+
+const char *video_shader_source_ident_name(const char *ident)
+{
+   if (!ident || !*ident)
+      return NULL;
+   return path_basename_nocompression(ident);
+}
+
+bool video_shader_source_ident_is_slang(const char *ident)
+{
+   if (!ident || !*ident)
+      return false;
+   return string_is_equal(path_get_extension(ident), "slang");
+}
+
 bool video_shader_source_read(const char *ident, char **buf, int64_t *len)
 {
    int64_t n  = 0;

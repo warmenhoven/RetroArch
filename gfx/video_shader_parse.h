@@ -309,6 +309,41 @@ void video_shader_toggle(settings_t *settings, bool write);
  **/
 bool video_shader_source_read(const char *ident, char **buf, int64_t *len);
 
+/**
+ * video_shader_source_resolve:
+ * @parent : what named the source doing the referring, or NULL
+ * @name   : the reference, as it was written in the source
+ * @s      : receives what to ask for with video_shader_source_read()
+ * @len    : size of @s
+ *
+ * Turns a reference inside one source into a name for another. A
+ * shader driver hands back what it read out of an #include line and
+ * gets a name it can ask for; how that resolves - relative to the
+ * referring file, or otherwise - is decided here.
+ *
+ * Returns: true when the reference resolved.
+ **/
+bool video_shader_source_resolve(const char *parent, const char *name,
+      char *s, size_t len);
+
+/**
+ * video_shader_source_ident_name:
+ * @ident : a name video_shader_source_read() would take
+ *
+ * The short name of a source, for the #line directives a preprocessor
+ * writes into what it hands the compiler. Points into @ident.
+ **/
+const char *video_shader_source_ident_name(const char *ident);
+
+/**
+ * video_shader_source_ident_is_slang:
+ * @ident : a name video_shader_source_read() would take
+ *
+ * Whether a source is a slang one, which a preprocessor checks the
+ * #version line of.
+ **/
+bool video_shader_source_ident_is_slang(const char *ident);
+
 RETRO_END_DECLS
 
 #endif
