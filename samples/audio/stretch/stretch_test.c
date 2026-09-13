@@ -748,8 +748,14 @@ static void transition_drain_chain(void)
 static size_t adapter_run(unsigned rate, unsigned channels, unsigned native,
       double tempo, unsigned modes, unsigned fragmented, unsigned slot, unsigned block)
 {
-   float reset_f[8];
-   int16_t reset_i[8];
+   /* One frame, at the widest layout the loop below reaches.
+    * These were eight, which is a frame at eight channels and six
+    * bytes short of one at eleven - and the reset case hands the
+    * stream an output_capacity of exactly one frame, so the stretcher
+    * filled a whole frame into a buffer that could not hold one. The
+    * library was right; the fixture was not. */
+   float   reset_f[AUDIO_STRETCH_MAX_CHANNELS];
+   int16_t reset_i[AUDIO_STRETCH_MAX_CHANNELS];
    audio_stretch_stream_t *s = audio_stretch_stream_new(rate, channels, native, 1);
    const char *src = (const char*)(native ? (void*)input_f : (void*)input_i);
    char *dst = (char*)(native ? (void*)output_f[slot] : (void*)output_i[slot]);
