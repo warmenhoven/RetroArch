@@ -602,10 +602,15 @@ void gfx_display_draw_texture_slice(
    gfx_display_ctx_draw_t draw;
    struct video_coords coords;
    gfx_display_ctx_driver_t *dispctx = p_disp->dispctx;
-   float V_BL[2], V_BR[2], V_TL[2], V_TR[2];
-   float T_BL[2], T_BR[2], T_TL[2], T_TR[2];
-   float tex_coord[8];
-   float vert_coord[8];
+   /* The top left piece; the grid below walks out from it */
+   float V_BL[2], V_TL[2];
+   /* Nine pieces of four vertices, with two more at each of the eight
+    * seams that join them into one strip */
+   float tex_coord[52 * 2];
+   float vert_coord[52 * 2];
+   /* One colour per vertex: the source carries four, for a single
+    * quad's corners, and every piece repeats them */
+   float vert_color[52 * 4];
    float max_scale_w, max_scale_h, slice_scale;
    float vert_woff, vert_hoff, tex_woff, tex_hoff;
    float vert_scaled_mid_width, vert_scaled_mid_height;
@@ -679,20 +684,8 @@ void gfx_display_draw_texture_slice(
     */
    V_BL[0] = norm_x;
    V_BL[1] = norm_y;
-   V_BR[0] = norm_x + vert_woff;
-   V_BR[1] = norm_y;
    V_TL[0] = norm_x;
    V_TL[1] = norm_y + vert_hoff;
-   V_TR[0] = norm_x + vert_woff;
-   V_TR[1] = norm_y + vert_hoff;
-   T_BL[0] = 0.0f;
-   T_BL[1] = tex_hoff;
-   T_BR[0] = tex_woff;
-   T_BR[1] = tex_hoff;
-   T_TL[0] = 0.0f;
-   T_TL[1] = 0.0f;
-   T_TR[0] = tex_woff;
-   T_TR[1] = 0.0f;
 
    coords.vertices          = 4;
    coords.vertex            = vert_coord;
@@ -717,194 +710,98 @@ void gfx_display_draw_texture_slice(
    /* If someone wants to change this to not draw several times, the
     * coordinates will need to be modified because of the triangle strip usage. */
 
-   /* Top Left corner */
-   vert_coord[0] = V_BL[0];
-   vert_coord[1] = V_BL[1];
-   vert_coord[2] = V_BR[0];
-   vert_coord[3] = V_BR[1];
-   vert_coord[4] = V_TL[0];
-   vert_coord[5] = V_TL[1];
-   vert_coord[6] = V_TR[0];
-   vert_coord[7] = V_TR[1];
+   /* One strip for the nine pieces rather than nine draws of four
+    * vertices each. The pieces are a three by three grid: four vertical
+    * lines and four horizontal ones in both vertex and texture space,
+    * and every piece is the rectangle between two of each. Consecutive
+    * pieces are joined by repeating a vertex at each end of the seam,
+    * which the rasteriser drops as zero-area - the price of a strip,
+    * and cheaper than nine viewport sets and nine blend pairs. */
+   {
+      unsigned row, col, v  = 0;
+      const float *src_col  = (const float*)(color == NULL ? colors : color);
+      /* Vertex space: V_* describe the top left piece, so the lines are
+       * its edges walked across and down by the middle's size. */
+      float vx[4];
+      float vy[4];
+      float tx[4];
+      float ty[4];
 
-   tex_coord[0] = T_BL[0];
-   tex_coord[1] = T_BL[1];
-   tex_coord[2] = T_BR[0];
-   tex_coord[3] = T_BR[1];
-   tex_coord[4] = T_TL[0];
-   tex_coord[5] = T_TL[1];
-   tex_coord[6] = T_TR[0];
-   tex_coord[7] = T_TR[1];
+      vx[0] = V_BL[0];
+      vx[1] = vx[0] + vert_woff;
+      vx[2] = vx[1] + vert_scaled_mid_width;
+      vx[3] = vx[2] + vert_woff;
+      vy[0] = V_TL[1];
+      vy[1] = vy[0] - vert_hoff;
+      vy[2] = vy[1] - vert_scaled_mid_height;
+      vy[3] = vy[2] - vert_hoff;
+      tx[0] = 0.0f;
+      tx[1] = tex_woff;
+      tx[2] = tx[1] + tex_mid_width;
+      tx[3] = 1.0f;
+      ty[0] = 0.0f;
+      ty[1] = tex_hoff;
+      ty[2] = ty[1] + tex_mid_height;
+      ty[3] = 1.0f;
 
-   dispctx->draw(&draw, userdata, video_width, video_height);
+      for (row = 0; row < 3; row++)
+      {
+         for (col = 0; col < 3; col++)
+         {
+            /* BL BR TL TR, the order the strip wants */
+            float qx[4];
+            float qy[4];
+            float qu[4];
+            float qv[4];
+            unsigned i;
 
-   /* Top Middle section */
-   vert_coord[0] = V_BL[0] + vert_woff;
-   vert_coord[1] = V_BL[1];
-   vert_coord[2] = V_BR[0] + vert_scaled_mid_width;
-   vert_coord[3] = V_BR[1];
-   vert_coord[4] = V_TL[0] + vert_woff;
-   vert_coord[5] = V_TL[1];
-   vert_coord[6] = V_TR[0] + vert_scaled_mid_width;
-   vert_coord[7] = V_TR[1];
+            qx[0] = vx[col];     qx[1] = vx[col + 1];
+            qx[2] = vx[col];     qx[3] = vx[col + 1];
+            qy[0] = vy[row + 1]; qy[1] = vy[row + 1];
+            qy[2] = vy[row];     qy[3] = vy[row];
+            qu[0] = tx[col];     qu[1] = tx[col + 1];
+            qu[2] = tx[col];     qu[3] = tx[col + 1];
+            qv[0] = ty[row + 1]; qv[1] = ty[row + 1];
+            qv[2] = ty[row];     qv[3] = ty[row];
 
-   tex_coord[0] = T_BL[0] + tex_woff;
-   tex_coord[1] = T_BL[1];
-   tex_coord[2] = T_BR[0] + tex_mid_width;
-   tex_coord[3] = T_BR[1];
-   tex_coord[4] = T_TL[0] + tex_woff;
-   tex_coord[5] = T_TL[1];
-   tex_coord[6] = T_TR[0] + tex_mid_width;
-   tex_coord[7] = T_TR[1];
+            if (v)
+            {
+               /* Seam: the piece before ends where this one starts */
+               unsigned c;
+               vert_coord[v * 2]     = vert_coord[(v - 1) * 2];
+               vert_coord[v * 2 + 1] = vert_coord[(v - 1) * 2 + 1];
+               tex_coord [v * 2]     = tex_coord [(v - 1) * 2];
+               tex_coord [v * 2 + 1] = tex_coord [(v - 1) * 2 + 1];
+               for (c = 0; c < 4; c++)
+                  vert_color[v * 4 + c] = vert_color[(v - 1) * 4 + c];
+               v++;
+               vert_coord[v * 2]     = qx[0];
+               vert_coord[v * 2 + 1] = qy[0];
+               tex_coord [v * 2]     = qu[0];
+               tex_coord [v * 2 + 1] = qv[0];
+               for (c = 0; c < 4; c++)
+                  vert_color[v * 4 + c] = src_col[c];
+               v++;
+            }
 
-   dispctx->draw(&draw, userdata, video_width, video_height);
+            for (i = 0; i < 4; i++)
+            {
+               unsigned c;
+               vert_coord[v * 2]     = qx[i];
+               vert_coord[v * 2 + 1] = qy[i];
+               tex_coord [v * 2]     = qu[i];
+               tex_coord [v * 2 + 1] = qv[i];
+               for (c = 0; c < 4; c++)
+                  vert_color[v * 4 + c] = src_col[i * 4 + c];
+               v++;
+            }
+         }
+      }
 
-   /* Top Right corner */
-   vert_coord[0] = V_BL[0] + vert_woff + vert_scaled_mid_width;
-   vert_coord[1] = V_BL[1];
-   vert_coord[2] = V_BR[0] + vert_scaled_mid_width + vert_woff;
-   vert_coord[3] = V_BR[1];
-   vert_coord[4] = V_TL[0] + vert_woff + vert_scaled_mid_width;
-   vert_coord[5] = V_TL[1];
-   vert_coord[6] = V_TR[0] + vert_scaled_mid_width + vert_woff;
-   vert_coord[7] = V_TR[1];
-
-   tex_coord[0] = T_BL[0] + tex_woff + tex_mid_width;
-   tex_coord[1] = T_BL[1];
-   tex_coord[2] = T_BR[0] + tex_mid_width + tex_woff;
-   tex_coord[3] = T_BR[1];
-   tex_coord[4] = T_TL[0] + tex_woff + tex_mid_width;
-   tex_coord[5] = T_TL[1];
-   tex_coord[6] = T_TR[0] + tex_mid_width + tex_woff;
-   tex_coord[7] = T_TR[1];
-
-   dispctx->draw(&draw, userdata, video_width, video_height);
-
-   /* Middle Left section */
-   vert_coord[0] = V_BL[0];
-   vert_coord[1] = V_BL[1] - vert_scaled_mid_height;
-   vert_coord[2] = V_BR[0];
-   vert_coord[3] = V_BR[1] - vert_scaled_mid_height;
-   vert_coord[4] = V_TL[0];
-   vert_coord[5] = V_TL[1] - vert_hoff;
-   vert_coord[6] = V_TR[0];
-   vert_coord[7] = V_TR[1] - vert_hoff;
-
-   tex_coord[0] = T_BL[0];
-   tex_coord[1] = T_BL[1] + tex_mid_height;
-   tex_coord[2] = T_BR[0];
-   tex_coord[3] = T_BR[1] + tex_mid_height;
-   tex_coord[4] = T_TL[0];
-   tex_coord[5] = T_TL[1] + tex_hoff;
-   tex_coord[6] = T_TR[0];
-   tex_coord[7] = T_TR[1] + tex_hoff;
-
-   dispctx->draw(&draw, userdata, video_width, video_height);
-
-   /* center section */
-   vert_coord[0] = V_BL[0] + vert_woff;
-   vert_coord[1] = V_BL[1] - vert_scaled_mid_height;
-   vert_coord[2] = V_BR[0] + vert_scaled_mid_width;
-   vert_coord[3] = V_BR[1] - vert_scaled_mid_height;
-   vert_coord[4] = V_TL[0] + vert_woff;
-   vert_coord[5] = V_TL[1] - vert_hoff;
-   vert_coord[6] = V_TR[0] + vert_scaled_mid_width;
-   vert_coord[7] = V_TR[1] - vert_hoff;
-
-   tex_coord[0] = T_BL[0] + tex_woff;
-   tex_coord[1] = T_BL[1] + tex_mid_height;
-   tex_coord[2] = T_BR[0] + tex_mid_width;
-   tex_coord[3] = T_BR[1] + tex_mid_height;
-   tex_coord[4] = T_TL[0] + tex_woff;
-   tex_coord[5] = T_TL[1] + tex_hoff;
-   tex_coord[6] = T_TR[0] + tex_mid_width;
-   tex_coord[7] = T_TR[1] + tex_hoff;
-
-   dispctx->draw(&draw, userdata, video_width, video_height);
-
-   /* Middle Right section */
-   vert_coord[0] = V_BL[0] + vert_woff + vert_scaled_mid_width;
-   vert_coord[1] = V_BL[1] - vert_scaled_mid_height;
-   vert_coord[2] = V_BR[0] + vert_woff + vert_scaled_mid_width;
-   vert_coord[3] = V_BR[1] - vert_scaled_mid_height;
-   vert_coord[4] = V_TL[0] + vert_woff + vert_scaled_mid_width;
-   vert_coord[5] = V_TL[1] - vert_hoff;
-   vert_coord[6] = V_TR[0] + vert_woff + vert_scaled_mid_width;
-   vert_coord[7] = V_TR[1] - vert_hoff;
-
-   tex_coord[0] = T_BL[0] + tex_woff + tex_mid_width;
-   tex_coord[1] = T_BL[1] + tex_mid_height;
-   tex_coord[2] = T_BR[0] + tex_woff + tex_mid_width;
-   tex_coord[3] = T_BR[1] + tex_mid_height;
-   tex_coord[4] = T_TL[0] + tex_woff + tex_mid_width;
-   tex_coord[5] = T_TL[1] + tex_hoff;
-   tex_coord[6] = T_TR[0] + tex_woff + tex_mid_width;
-   tex_coord[7] = T_TR[1] + tex_hoff;
-
-   dispctx->draw(&draw, userdata, video_width, video_height);
-
-   /* Bottom Left corner */
-   vert_coord[0] = V_BL[0];
-   vert_coord[1] = V_BL[1] - vert_hoff - vert_scaled_mid_height;
-   vert_coord[2] = V_BR[0];
-   vert_coord[3] = V_BR[1] - vert_hoff - vert_scaled_mid_height;
-   vert_coord[4] = V_TL[0];
-   vert_coord[5] = V_TL[1] - vert_hoff - vert_scaled_mid_height;
-   vert_coord[6] = V_TR[0];
-   vert_coord[7] = V_TR[1] - vert_hoff - vert_scaled_mid_height;
-
-   tex_coord[0] = T_BL[0];
-   tex_coord[1] = T_BL[1] + tex_hoff + tex_mid_height;
-   tex_coord[2] = T_BR[0];
-   tex_coord[3] = T_BR[1] + tex_hoff + tex_mid_height;
-   tex_coord[4] = T_TL[0];
-   tex_coord[5] = T_TL[1] + tex_hoff + tex_mid_height;
-   tex_coord[6] = T_TR[0];
-   tex_coord[7] = T_TR[1] + tex_hoff + tex_mid_height;
-
-   dispctx->draw(&draw, userdata, video_width, video_height);
-
-   /* Bottom Middle section */
-   vert_coord[0] = V_BL[0] + vert_woff;
-   vert_coord[1] = V_BL[1] - vert_hoff - vert_scaled_mid_height;
-   vert_coord[2] = V_BR[0] + vert_scaled_mid_width;
-   vert_coord[3] = V_BR[1] - vert_hoff - vert_scaled_mid_height;
-   vert_coord[4] = V_TL[0] + vert_woff;
-   vert_coord[5] = V_TL[1] - vert_hoff - vert_scaled_mid_height;
-   vert_coord[6] = V_TR[0] + vert_scaled_mid_width;
-   vert_coord[7] = V_TR[1] - vert_hoff - vert_scaled_mid_height;
-
-   tex_coord[0] = T_BL[0] + tex_woff;
-   tex_coord[1] = T_BL[1] + tex_hoff + tex_mid_height;
-   tex_coord[2] = T_BR[0] + tex_mid_width;
-   tex_coord[3] = T_BR[1] + tex_hoff + tex_mid_height;
-   tex_coord[4] = T_TL[0] + tex_woff;
-   tex_coord[5] = T_TL[1] + tex_hoff + tex_mid_height;
-   tex_coord[6] = T_TR[0] + tex_mid_width;
-   tex_coord[7] = T_TR[1] + tex_hoff + tex_mid_height;
-
-   dispctx->draw(&draw, userdata, video_width, video_height);
-
-   /* Bottom Right corner */
-   vert_coord[0] = V_BL[0] + vert_woff + vert_scaled_mid_width;
-   vert_coord[1] = V_BL[1] - vert_hoff - vert_scaled_mid_height;
-   vert_coord[2] = V_BR[0] + vert_scaled_mid_width + vert_woff;
-   vert_coord[3] = V_BR[1] - vert_hoff - vert_scaled_mid_height;
-   vert_coord[4] = V_TL[0] + vert_woff + vert_scaled_mid_width;
-   vert_coord[5] = V_TL[1] - vert_hoff - vert_scaled_mid_height;
-   vert_coord[6] = V_TR[0] + vert_scaled_mid_width + vert_woff;
-   vert_coord[7] = V_TR[1] - vert_hoff - vert_scaled_mid_height;
-
-   tex_coord[0] = T_BL[0] + tex_woff + tex_mid_width;
-   tex_coord[1] = T_BL[1] + tex_hoff + tex_mid_height;
-   tex_coord[2] = T_BR[0] + tex_woff + tex_mid_width;
-   tex_coord[3] = T_BR[1] + tex_hoff + tex_mid_height;
-   tex_coord[4] = T_TL[0] + tex_woff + tex_mid_width;
-   tex_coord[5] = T_TL[1] + tex_hoff + tex_mid_height;
-   tex_coord[6] = T_TR[0] + tex_woff + tex_mid_width;
-   tex_coord[7] = T_TR[1] + tex_hoff + tex_mid_height;
-
-   dispctx->draw(&draw, userdata, video_width, video_height);
+      coords.vertices = v;
+      coords.color    = vert_color;
+      dispctx->draw(&draw, userdata, video_width, video_height);
+   }
 }
 
 void gfx_display_rotate_z(gfx_display_t *p_disp,
