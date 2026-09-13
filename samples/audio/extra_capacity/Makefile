@@ -15,7 +15,7 @@ SOURCES = $(COMMON)/audio/resampler/drivers/sinc_resampler.c \
  $(COMMON)/memmap/memalign.c
 all: extra_capacity_test
 # Internalize unrelated frontend entry points in this focused include harness.
-extra_capacity_test.o: extra_capacity_test.c $(ROOT)/audio/audio_driver.c
+extra_capacity_test.o: extra_capacity_test.c $(ROOT)/audio/audio_driver.c $(ROOT)/audio/audio_driver.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -fwhole-program -c $< -o $@
 extra_capacity_test: extra_capacity_test.o $(SOURCES)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDFLAGS) $(LDLIBS) -o $@

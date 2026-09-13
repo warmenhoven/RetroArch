@@ -830,6 +830,7 @@ typedef struct
       unsigned  nres;            /* resampler instances: (channels + 1) / 2 */
       void     *res[4];          /* float: resampler_data; int16: resampler_data_int16 */
       bool      res_int16;       /* which kind res[] holds */
+      bool      bypassed;
       float    *in_f;            /* frames * channels, interleaved, this batch */
       int16_t  *in_i;
       float    *pair_in;         /* one pair's frames, for the resampler */

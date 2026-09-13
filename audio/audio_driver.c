@@ -708,6 +708,12 @@ static void audio_driver_extra_resample(audio_driver_state_t *audio_st,
       return;
    if (input_frames > audio_st->extra.in_frames)
       input_frames = audio_st->extra.in_frames;
+   /* Keep the extra histories fresh while the front pair bypasses SRC. */
+   if (bypass && !audio_st->extra.bypassed && !int16_path
+         && audio_st->resampler->reset)
+      for (i = 0; i < audio_st->extra.nres; i++)
+         audio_st->resampler->reset(audio_st->extra.res[i]);
+   audio_st->extra.bypassed = bypass;
    /* the front path decided its format; the extras follow it */
    if (int16_path && audio_st->extra.is_float)
       convert_float_to_s16(audio_st->extra.in_i, audio_st->extra.in_f, input_frames * ch);

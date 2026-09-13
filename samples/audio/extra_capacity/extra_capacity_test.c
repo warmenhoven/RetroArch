@@ -110,10 +110,73 @@ static void check_lane(int integer)
    else sinc_resampler.free(front);
 }
 
+static unsigned reset_calls;
+static void count_reset(void *state)
+{
+   reset_calls++;
+   sinc_resampler.reset(state);
+}
+
+static void check_bypass(void)
+{
+   static audio_driver_state_t st;
+   static float front_input[256 * 2], front_output[1024 * 2];
+   retro_resampler_t backend = sinc_resampler;
+   void *front;
+   unsigned pass, i, before;
+   backend.reset = count_reset;
+   memset(&st, 0, sizeof(st));
+   st.resampler = &backend;
+   st.resampler_quality = RESAMPLER_QUALITY_NORMAL;
+   st.src_ratio_orig = 1.0;
+   st.output_samples_buf_length = sizeof(front_output);
+   /* Four extras exercise two independently owned histories. */
+   CHECK(audio_driver_extra_prepare(&st, 4, 0, 256, true, false));
+   front = sinc_resampler.init(NULL, 1.0, RESAMPLER_QUALITY_NORMAL, 0);
+   if (!front) exit(2);
+   for (i = 0; i < 256; i++)
+   {
+      unsigned ch;
+      for (ch = 0; ch < 4; ch++)
+         st.extra.in_f[4 * i + ch] = (float)((i + ch) % 23) / 32.0f;
+   }
+   st.extra.pending = true;
+   audio_driver_extra_resample(&st, 1.5, 256, false, false);
+   reset_calls = 0;
+   before = heap_calls;
+   for (pass = 0; pass < 3; pass++)
+   {
+      st.extra.pending = true;
+      audio_driver_extra_resample(&st, 1.0, 256, true, false);
+      CHECK(st.extra.out_frames == 256);
+      CHECK(memcmp(st.extra.out_f, st.extra.in_f, 256 * 4 * sizeof(float)) == 0);
+      CHECK(reset_calls == 2);
+   }
+   memset(st.extra.in_f, 0, 256 * 4 * sizeof(float));
+   memset(front_input, 0, sizeof(front_input));
+   for (pass = 0; pass < 2; pass++)
+   {
+      struct resampler_data d;
+      d.data_in = front_input; d.data_out = front_output;
+      d.input_frames = 256; d.ratio = 1.5;
+      sinc_resampler.process(front, &d);
+      st.extra.pending = true;
+      audio_driver_extra_resample(&st, 1.5, 256, false, false);
+      CHECK(st.extra.out_frames == d.output_frames);
+      for (i = 0; i < d.output_frames * 4; i++)
+         CHECK(st.extra.out_f[i] == front_output[(i / 4) * 2 + (i % 2)]);
+      CHECK(reset_calls == 2);
+   }
+   CHECK(heap_calls == before);
+   audio_driver_extra_free(&st);
+   sinc_resampler.free(front);
+}
+
 int main(void)
 {
    check_lane(0);
    check_lane(1);
+   check_bypass();
    printf("extra capacity: %u failures\n", failures);
    return failures != 0;
 }
