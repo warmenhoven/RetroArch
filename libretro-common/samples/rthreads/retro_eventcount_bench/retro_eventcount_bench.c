@@ -300,12 +300,7 @@ static void bench_spin_cost(void)
    const long   n = 50000000;
    retro_time_t t0, t1;
    double       per;
-   unsigned     iters = 256;
-   const char  *env = getenv("RETRO_EVENTCOUNT_SPIN");
    long         i;
-
-   if (env)
-      iters = (unsigned)strtoul(env, NULL, 0);
 
    t0 = cpu_features_get_time_usec();
    for (i = 0; i < n; i++)
@@ -314,9 +309,10 @@ static void bench_spin_cost(void)
 
    per = (double)(t1 - t0) * 1000.0 / (double)n;
 
-   printf("  spin_cost     %8.2f ns/relax    %8.2f us burned by a "
-          "%u-iteration spin that times out\n",
-         per, per * (double)iters / 1000.0, iters);
+   printf("  spin_cost     %8.2f ns/relax    %8.2f us for the %u "
+          "iterations this backend chose\n",
+         per, per * (double)retro_eventcount_spin_iters() / 1000.0,
+         retro_eventcount_spin_iters());
 }
 
 int main(void)

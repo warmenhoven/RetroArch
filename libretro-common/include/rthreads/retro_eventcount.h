@@ -222,6 +222,17 @@ bool retro_eventcount_commit_wait_timeout(retro_eventcount_t *ec,
       int key, int64_t timeout_us);
 
 /**
+ * retro_eventcount_spin_iters:
+ *
+ * @return how many times a waiter spins on its flag word before it
+ * commits to the kernel, as this build resolved it.  Zero on a
+ * uniprocessor, where the spin is skipped.  For logs and benchmarks;
+ * on Windows it is only meaningful after the first
+ * retro_eventcount_init().
+ */
+unsigned retro_eventcount_spin_iters(void);
+
+/**
  * retro_eventcount_backend_name:
  *
  * @return a string literal naming the live parking backend, for logs

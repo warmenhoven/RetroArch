@@ -112,12 +112,16 @@ typedef char retro_eventcount_epoch_is_a_word_
 
 #define EC_STATUS_TIMEOUT 0x102
 
-/* Flag-word spins before committing to the kernel, on multiprocessor
- * only.  Overridable with RETRO_EVENTCOUNT_SPIN for measurement.
+/* How long a waiter spins on its flag word before committing to the
+ * kernel, on multiprocessor only.  A budget in microseconds rather
+ * than a count of iterations: a PAUSE is worth an order of magnitude
+ * more cycles on some processors than others, so a fixed count is a
+ * different amount of time on every machine.  The count is derived
+ * from a measured relax at resolve time.
  *
- * Measured on Windows 11 x64, four waiters on one object.  Round trip
- * and broadcast, against what a spin that finds nothing costs at
- * 11.8ns per relax on that machine:
+ * Measured on Windows 11 x64, four waiters on one object, where a
+ * relax costs 11.8ns.  Round trip and broadcast per waiter, against
+ * what a spin that finds nothing costs:
  *
  *     spin      burn    round trip   broadcast/waiter
  *        0     0.00us      4.21us          0.94us
@@ -127,16 +131,17 @@ typedef char retro_eventcount_epoch_is_a_word_
  *      512     6.04us      0.08us          0.12us
  *     4096    48.63us      0.07us          0.12us
  *
- * 256 is the knee on both lanes and nothing above it buys anything,
- * so the default sits there: a spin that finds nothing costs about
- * what the wake syscall it is avoiding would have.
- *
- * An iteration count does not transfer between processors -- a PAUSE
- * is worth an order of magnitude more cycles on some than others -- so
- * this wants to become a microsecond budget with the count derived at
- * resolve time, sharing rthreads' selector rather than growing a
- * second copy. */
-#define EC_SPIN_ITERS 256
+ * The knee is at 256 iterations there, which is 3us, and nothing above
+ * it buys anything -- a spin that finds nothing then costs about what
+ * the wake syscall it avoids would have.  RETRO_EVENTCOUNT_SPIN_US
+ * moves the budget; RETRO_EVENTCOUNT_SPIN sets the count outright and
+ * skips the calibration. */
+#define EC_SPIN_US 3
+
+/* Bounds on the derived count, so a mismeasured relax cannot turn the
+ * spin into either a no-op or an unbounded burn. */
+#define EC_SPIN_MIN 32
+#define EC_SPIN_MAX 8192
 
 struct ec_waiter
 {
@@ -170,6 +175,56 @@ static struct
    unsigned           spin;   /* 0 on a single processor */
    int                sleep;
 } ec_g;
+
+/* Relax iterations that fit in @budget_us.  Timed rather than assumed,
+ * and taken as the best of a few short passes so a preemption in the
+ * middle of one does not stretch the answer.  QueryPerformanceCounter
+ * is the clock because it is the one available on every Windows this
+ * backend runs on. */
+static unsigned ec_spin_for_budget(unsigned budget_us)
+{
+   const unsigned  samples = 3;
+   const unsigned  iters   = 2048;
+   LARGE_INTEGER   freq;
+   double          best = 0.0;
+   unsigned        s, i;
+
+   if (!budget_us)
+      return 0;
+
+   if (!QueryPerformanceFrequency(&freq) || freq.QuadPart <= 0)
+      return EC_SPIN_MIN * 8;   /* no clock: a middling fixed count */
+
+   for (s = 0; s < samples; s++)
+   {
+      LARGE_INTEGER t0, t1;
+      double        us;
+
+      QueryPerformanceCounter(&t0);
+      for (i = 0; i < iters; i++)
+         retro_cpu_relax();
+      QueryPerformanceCounter(&t1);
+
+      us = (double)(t1.QuadPart - t0.QuadPart) * 1000000.0
+         / (double)freq.QuadPart;
+
+      if (us > 0.0 && (best == 0.0 || us < best))
+         best = us;
+   }
+
+   if (best <= 0.0)
+      return EC_SPIN_MIN * 8;
+
+   {
+      double n = (double)budget_us * (double)iters / best;
+
+      if (n < (double)EC_SPIN_MIN)
+         return EC_SPIN_MIN;
+      if (n > (double)EC_SPIN_MAX)
+         return EC_SPIN_MAX;
+      return (unsigned)n;
+   }
+}
 
 static void ec_win32_resolve(void)
 {
@@ -213,10 +268,21 @@ static void ec_win32_resolve(void)
    {
       SYSTEM_INFO si;
       const char *env;
+      unsigned    budget = EC_SPIN_US;
 
       GetSystemInfo(&si);
-      ec_g.spin = si.dwNumberOfProcessors > 1 ? EC_SPIN_ITERS : 0;
 
+      /* An asked-for budget is honoured whatever the processor count,
+       * so the calibration is reachable for measurement on a machine
+       * that would otherwise skip the spin entirely. */
+      if ((env = getenv("RETRO_EVENTCOUNT_SPIN_US")))
+         budget = (unsigned)strtoul(env, NULL, 0);
+      else if (si.dwNumberOfProcessors <= 1)
+         budget = 0;
+
+      ec_g.spin = ec_spin_for_budget(budget);
+
+      /* An explicit count wins over the budget, for sweeping. */
       if ((env = getenv("RETRO_EVENTCOUNT_SPIN")))
          ec_g.spin = (unsigned)strtoul(env, NULL, 0);
    }
@@ -630,6 +696,16 @@ bool retro_eventcount_commit_wait_timeout(retro_eventcount_t *ec,
 #endif
 
    return signalled;
+}
+
+unsigned retro_eventcount_spin_iters(void)
+{
+#if defined(RETRO_EC_ADDR_WIN32)
+   ec_win32_init();
+   return ec_g.spin;
+#else
+   return 0;
+#endif
 }
 
 const char *retro_eventcount_backend_name(void)
