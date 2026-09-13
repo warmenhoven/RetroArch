@@ -53,6 +53,16 @@ IVAR = re.compile(r"^\s*(?:__\w+\s+)?([A-Z][A-Za-z0-9_]*(?:\s*<[^>]*>)?|id)\s*\*
 # object-typed fields of C structs
 FIELD = re.compile(r"^\s{2,}([A-Z][A-Za-z0-9_]*(?:\s*<[^>]*>)?|id)\s*\*\s*([A-Za-z_]\w*)\s*;")
 
+# The other direction: a property whose setter retains, handed an
+# expression that is already +1.  The store leaves the object at +2 and
+# assigning over it later drops only one of those, so the previous value
+# is orphaned rather than torn down.  Under ARC the same line is correct,
+# which is why it survives review.
+PROP = re.compile(r"@property\s*\(([^)]*)\)\s*[^;]*?\*?\s*(\w+)\s*;")
+STORE = re.compile(r"(?:self|\w+)\.(\w+)\s*=\s*(.+)")
+RELEASING = re.compile(r"RARCH_RELEASE|RARCH_AUTORELEASE"
+                       r"|\brelease\s*\]|\bautorelease\s*\]")
+
 hits, checked = [], 0
 for f in files:
     src = open(f, errors="replace").read().split("\n")
@@ -89,6 +99,30 @@ for f in files:
         if n in longlived or lhs.strip().startswith("static ") or "->" in lhs or "_" == n[:1]:
             hits.append((f, i, n, "[%s %s...]" % m.groups(), l.strip()[:100]))
 
+# Second pass: +1 into a retaining property.
+owning = []
+for f in files:
+    src = open(f, errors="replace").read()
+    lines = src.split("\n")
+    retaining = set(name for attrs, name in PROP.findall(src)
+                    if ("strong" in attrs or "retain" in attrs
+                        or "copy" in attrs))
+    if not retaining:
+        continue
+    for i, l in enumerate(lines):
+        if l.strip().startswith(("*", "/*", "//")):
+            continue
+        m = STORE.search(l)
+        if not m or m.group(1) not in retaining:
+            continue
+        if not OWNING.search(m.group(2)):
+            continue
+        # released on the same line, or within the next few
+        window = "\n".join(lines[i + 1:i + 5])
+        if RELEASING.search(m.group(2)) or RELEASING.search(window):
+            continue
+        owning.append((f, i + 1, m.group(1), l.strip()[:100]))
+
 for f, i, dest, ctor, l in hits:
     print("%s:%d  %s = %s" % (f, i, dest, ctor))
     print("      %s" % l)
@@ -97,3 +131,11 @@ print("\n%d candidate(s); %d long-lived object slots examined across %d MRC file
 print("Each is a slot outliving the pool assigned from a class-side message.")
 print("Owning it (alloc/init, or retain) is the fix; a permanent singleton")
 print("or a local that dies with the pool is a false positive - read them.")
+
+for f, i, dest, l in owning:
+    print("\n%s:%d  .%s stores a +1 expression into a retaining property" % (f, i, dest))
+    print("      %s" % l)
+print("\n%d property store(s) at +2" % len(owning))
+if owning:
+    print("Release the allocation's own reference once the property holds it:")
+    print("  T *x = [[T alloc] init]; self.prop = x; RARCH_RELEASE(x);")
