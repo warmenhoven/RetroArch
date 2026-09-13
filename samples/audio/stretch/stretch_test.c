@@ -1078,6 +1078,69 @@ static void adapter_direct_active(void)
    }
 }
 
+static void bound_budget_cases(void)
+{
+   const size_t budgets[] = {0, 1, 7, 127, (size_t)-1};
+   unsigned native;
+   for (native = 0; native < 2; native++)
+   {
+      audio_stretch_stream_t *direct = audio_stretch_stream_new(48000, 8, native, 1);
+      audio_stretch_stream_t *bound = audio_stretch_stream_new(48000, 8, native, 1);
+      const char *input = (const char*)(native ? (void*)input_f : (void*)input_i);
+      void *a = native ? (void*)output_f[0] : (void*)output_i[0];
+      void *b = native ? (void*)output_f[1] : (void*)output_i[1];
+      size_t used = 0, count, accepted, frame = 8 * (native ? sizeof(float) : sizeof(int16_t));
+      unsigned iteration = 0, stage;
+      bool complete = false;
+      struct audio_stretch_io io;
+      struct audio_stretch_drain_io drain;
+      fill(8);
+      CHECK(audio_stretch_stream_bind(bound, b, 128));
+      guarded = 1;
+      CHECK(audio_stretch_stream_finish_limit(bound, &complete, 0) && !complete);
+      for (stage = 0; stage < 4; stage++)
+         while (used < (stage + 1) * (FRAMES / 4))
+         {
+            size_t budget = budgets[iteration++ % 5];
+            io.input = input + used * frame;
+            io.input_frames = (stage + 1) * (FRAMES / 4) - used;
+            io.output = a; io.output_capacity = budget < 128 ? budget : 128;
+            CHECK(audio_stretch_stream_process(direct, &io, 4, (5 >> stage) & 1));
+            CHECK(audio_stretch_stream_push_limit(bound, input + used * frame,
+                     (stage + 1) * (FRAMES / 4) - used, &accepted, 4, (5 >> stage) & 1, budget));
+            audio_stretch_stream_peek(bound, &count);
+            CHECK(accepted == io.input_used && count == io.output_frames);
+            CHECK(memcmp(a, b, count * frame) == 0);
+            used += accepted;
+            if (count)
+            {
+               size_t ignored, unchanged;
+               CHECK(audio_stretch_stream_push_limit(bound, input, 1, &ignored, 4, false, 0));
+               CHECK(!ignored);
+               audio_stretch_stream_peek(bound, &unchanged);
+               CHECK(unchanged == count && memcmp(a, b, count * frame) == 0);
+               CHECK(audio_stretch_stream_finish_limit(bound, &complete, 0) && !complete);
+            }
+            CHECK(audio_stretch_stream_consume(bound, count));
+         }
+      complete = false;
+      while (!complete)
+      {
+         size_t budget = budgets[iteration++ % 5];
+         drain.output = a; drain.output_capacity = budget < 128 ? budget : 128;
+         CHECK(audio_stretch_stream_flush(direct, &drain));
+         CHECK(audio_stretch_stream_finish_limit(bound, &complete, budget));
+         audio_stretch_stream_peek(bound, &count);
+         CHECK(count == drain.output_frames && memcmp(a, b, count * frame) == 0);
+         CHECK(!complete || !count);
+         CHECK(audio_stretch_stream_consume(bound, count));
+      }
+      CHECK(audio_stretch_stream_finish_limit(bound, &complete, 0) && complete);
+      guarded = 0;
+      audio_stretch_stream_free(direct); audio_stretch_stream_free(bound);
+   }
+}
+
 int main(void)
 {
    contracts();
@@ -1096,6 +1159,7 @@ int main(void)
    adapter_rapid();
    bound_cases();
    adapter_direct_active();
+   bound_budget_cases();
    CHECK(heap_calls == 0);
    printf("stretch: %u failures, %u processing/reset heap calls\n", failures, heap_calls);
    return failures != 0;

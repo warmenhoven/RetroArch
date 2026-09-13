@@ -137,7 +137,7 @@ int main(void)
                   audio_stretch_stream_t *stream = audio_stretch_stream_new(48000, channels, native, 1);
                   union chain_buffer block;
                   const char *input = native ? (const char*)input_f : (const char*)input_i;
-                  size_t used = 0, n, count, produced;
+                  size_t used = 0, n, count, produced, budget, pending;
                   unsigned stage;
                   bool complete = false;
                   const void *view;
@@ -149,10 +149,13 @@ int main(void)
                      {
                         size_t limit = (stage + 1) * (FRAMES / 4) - used;
                         if (limit > 71) limit = 71;
-                        CHECK(audio_stretch_stream_push(stream, input + used * frame,
-                                 limit, &n, 2.0, (5 >> stage) & 1));
+                        audio_stretch_stream_peek(stream, &pending);
+                        budget = 1 + used % 23;
+                        CHECK(audio_stretch_stream_push_limit(stream, input + used * frame,
+                                 limit, &n, 2.0, (5 >> stage) & 1, budget));
                         used += n;
                         view = audio_stretch_stream_peek(stream, &count);
+                        CHECK(pending || count <= budget);
                         if (count)
                         {
                            if (count > 17) count = 17;
@@ -163,8 +166,10 @@ int main(void)
                      }
                   while (!complete)
                   {
-                     CHECK(audio_stretch_stream_finish(stream, &complete));
+                     audio_stretch_stream_peek(stream, &pending);
+                     CHECK(audio_stretch_stream_finish_limit(stream, &complete, 7));
                      view = audio_stretch_stream_peek(stream, &count);
+                     CHECK(pending || count <= 7);
                      if (count)
                      {
                         if (count > 11) count = 11;

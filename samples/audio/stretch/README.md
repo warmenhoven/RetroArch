@@ -201,3 +201,24 @@ The simulated sink fully accepts each prepared output block before upstream
 processing resumes. This establishes the intended ownership order, not driver
 short-write behavior. Linux's existing stretch ASan/UBSan job runs both suites;
 local sanitizer/device acceptance and frontend wiring remain outstanding.
+
+## Per-pass production budgets
+
+`audio_stretch_stream_push_limit` and `audio_stretch_stream_finish_limit` cap new
+output to the smaller of the supplied frame limit and bound buffer capacity.
+They allocate and copy nothing beyond existing processing. A zero limit is a
+non-mutating validation/query: it neither consumes input nor latches exit/EOF.
+Positive limits retain the existing exit/EOF behavior. Pending output is never
+truncated to a new limit; its remaining span must still be acknowledged.
+Existing push/finish calls retain full-capacity behavior.
+
+Frontend preflight can now pass an SRC input-frame budget without rebinding or
+resizing its native arena. This limit is in stretched frames, not source frames
+or device bytes. Derive it from the downstream ratio and output scratch/device
+budget; then separately cap the SRC submission from any pending span. The API
+does not calculate that frontend budget or change device writes.
+
+Tests compare varying limits (0, 1, 7, 127 and SIZE_MAX) against direct adapter
+calls, including pending-output zero-budget control requests and EOF. The real
+SRC chain fixture now varies production budgets from 1..23 and drains EOF in
+seven-frame budgets while retaining exact reference output.

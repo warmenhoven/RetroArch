@@ -131,10 +131,19 @@ bool audio_stretch_stream_bind(audio_stretch_stream_t *state,
       void *output, size_t capacity);
 bool audio_stretch_stream_push(audio_stretch_stream_t *state,
       const void *input, size_t frames, size_t *used, double tempo, bool active);
+/* Limit newly produced frames to min(limit, bound capacity). A zero limit
+ * validates only: no source consumption, output or control-state mutation.
+ * Already pending output remains unchanged and must be consumed separately. */
+bool audio_stretch_stream_push_limit(audio_stretch_stream_t *state,
+      const void *input, size_t frames, size_t *used, double tempo, bool active,
+      size_t limit);
 const void *audio_stretch_stream_peek(const audio_stretch_stream_t *state,
       size_t *frames);
 bool audio_stretch_stream_consume(audio_stretch_stream_t *state, size_t frames);
 bool audio_stretch_stream_finish(audio_stretch_stream_t *state, bool *complete);
+/* Same production limit; zero queries completion without latching EOF. */
+bool audio_stretch_stream_finish_limit(audio_stretch_stream_t *state,
+      bool *complete, size_t limit);
 
 RETRO_END_DECLS
 #endif
