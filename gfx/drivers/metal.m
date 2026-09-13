@@ -152,12 +152,6 @@ typedef NS_ENUM(NSUInteger, ViewportResetMode) {
 
 /*! @brief captureEnabled allows previous frames to be read */
 @property (nonatomic, readwrite) bool captureEnabled;
-/* What the last frame said the menu filter should be:
- * set_texture_frame() is applied by the video thread from
- * thread_update_driver_state(), and reading the setting there races
- * the menu writing it. */
-@property (nonatomic, readwrite) bool frameMenuLinearFilter;
-
 /*! @brief Returns the command buffer used for pre-render work,
  * such as mip maps and shader effects
  * */
@@ -433,6 +427,13 @@ typedef NS_ENUM(NSInteger, ViewDrawState)
 @property(nonatomic, readonly) Overlay *overlay;
 @property(nonatomic, readonly) Context *context;
 @property(nonatomic, readonly) Uniforms *viewportMVP;
+
+/* What the last frame said the menu filter should be:
+ * set_texture_frame() is applied by the video thread from
+ * thread_update_driver_state(), and reading the setting there races
+ * the menu writing it. Both users are MetalDriver - this was
+ * declared on Context, where nothing referred to it. */
+@property(nonatomic, readwrite) bool frameMenuLinearFilter;
 
 - (instancetype)initWithVideo:(const video_info_t *)video
                                        input:(input_driver_t **)input
