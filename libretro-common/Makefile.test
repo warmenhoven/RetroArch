@@ -203,11 +203,12 @@ vfs-samples:
 # is supplied for free by x86 TSO, so a weakened or deleted barrier
 # still produces right answers here and shows up only as a race.
 #
-# GCC warns that atomic_thread_fence is not modelled under
-# -fsanitize=thread, and it means it: a standalone fence is invisible
-# to that pass.  retro_eventcount's wakeup handshake rests on one, so
-# a clean thread run says its loads and stores are ordered, not that
-# the fence between them is.
+# retro_eventcount's wakeup handshake is a pair of sequentially
+# consistent operations on each side rather than a standalone fence,
+# so ThreadSanitizer does model it.  It does not model a standalone
+# atomic_thread_fence, which GCC warns about, so anything that grows
+# one again gets a clean thread run for its loads and stores and no
+# statement at all about the fence between them.
 CONCURRENCY_SAN ?= address,undefined
 
 threads-samples:
@@ -236,6 +237,11 @@ threads-samples:
 	$(MAKE) -C samples/rthreads/retro_eventcount_test clean
 	$(MAKE) -C samples/rthreads/retro_eventcount_test check SANITIZER=$(CONCURRENCY_SAN)
 	$(MAKE) -C samples/rthreads/retro_eventcount_test clean
+	# same, and the only place the queue and the eventcount are
+	# exercised against each other
+	$(MAKE) -C samples/queues/retro_waitable_spsc_test clean
+	$(MAKE) -C samples/queues/retro_waitable_spsc_test check SANITIZER=$(CONCURRENCY_SAN)
+	$(MAKE) -C samples/queues/retro_waitable_spsc_test clean
 
 threads-samples-tsan:
 	$(MAKE) -f Makefile.test threads-samples CONCURRENCY_SAN=thread

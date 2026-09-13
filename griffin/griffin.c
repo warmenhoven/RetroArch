@@ -918,6 +918,7 @@ FIFO BUFFER
 ============================================================ */
 #include "../libretro-common/queues/fifo_queue.c"
 #include "../libretro-common/queues/retro_spsc.c"
+#include "../libretro-common/queues/retro_waitable_spsc.c"
 
 /*============================================================
 AUDIO RESAMPLER

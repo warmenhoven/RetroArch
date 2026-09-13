@@ -353,6 +353,7 @@ OBJ += \
        input/input_keymaps.o \
        $(LIBRETRO_COMM_DIR)/queues/fifo_queue.o \
        $(LIBRETRO_COMM_DIR)/queues/retro_spsc.o \
+       $(LIBRETRO_COMM_DIR)/queues/retro_waitable_spsc.o \
        $(LIBRETRO_COMM_DIR)/compat/compat_fnmatch.o \
        $(LIBRETRO_COMM_DIR)/compat/compat_posix_string.o
 
