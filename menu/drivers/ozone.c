@@ -6400,14 +6400,14 @@ border_iterate:
          ticker_smooth.field_width = entry_width - ozone->dimensions.entry_icon_padding * 6;
          ticker_smooth.src_str     = entry_rich_label;
          ticker_smooth.dst_str     = rich_label;
-         ticker_smooth.dst_str_len = sizeof(rich_label);
+         ticker_smooth.dst_str_len = NAME_MAX_LENGTH;
 
          gfx_animation_ticker_smooth(&ticker_smooth);
       }
       else
       {
          ticker.s        = rich_label;
-         ticker.s_len    = sizeof(rich_label);
+         ticker.s_len    = NAME_MAX_LENGTH;
          ticker.str      = entry_rich_label;
          ticker.selected = entry_selected && (!(ozone->flags & OZONE_FLAG_CURSOR_IN_SIDEBAR));
          ticker.len      = (entry_width - ozone->dimensions.entry_icon_padding * 6) / ozone->fonts.entries_label.glyph_width;
@@ -6433,7 +6433,7 @@ border_iterate:
             wrapped_sublabel_str[0] = '\0';
 
             (ozone->word_wrap)(wrapped_sublabel_str,
-                  sizeof(wrapped_sublabel_str),
+                  MENU_LABEL_MAX_LENGTH,
                   sublabel_str,
                   strlen(sublabel_str),
                   sublabel_max_width / ozone->fonts.entries_sublabel.glyph_width,
@@ -6724,7 +6724,7 @@ border_iterate:
                - ((unsigned)utf8len(entry_rich_label) * ozone->fonts.entries_label.glyph_width));
          ticker_smooth.src_str     = entry_value;
          ticker_smooth.dst_str     = entry_value_ticker;
-         ticker_smooth.dst_str_len = sizeof(entry_value_ticker);
+         ticker_smooth.dst_str_len = NAME_MAX_LENGTH;
 
          /* Value text is right aligned, so have to offset x
           * by the 'padding' width at the end of the ticker string... */
@@ -6734,7 +6734,7 @@ border_iterate:
       else
       {
          ticker.s        = entry_value_ticker;
-         ticker.s_len    = sizeof(entry_value_ticker);
+         ticker.s_len    = NAME_MAX_LENGTH;
          ticker.str      = entry_value;
          ticker.selected = entry_selected && (!(ozone->flags & OZONE_FLAG_CURSOR_IN_SIDEBAR));
          ticker.len      = (entry_width

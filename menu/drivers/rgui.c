@@ -379,6 +379,13 @@ typedef struct
    char theme_preset_path[PATH_MAX_LENGTH];       /* Must be a fixed length array... */
    char theme_dynamic_path[PATH_MAX_LENGTH];      /* Must be a fixed length array... */
    char last_theme_dynamic_path[PATH_MAX_LENGTH]; /* Must be a fixed length array... */
+   /* What rendering one entry needs. Here rather than in the loop that
+    * renders them: a menu_entry_t is 3872 bytes on its own, and with
+    * the sublabel buffer beside it the frame came to 5912 - past what
+    * this tree allows, on a function that runs every frame. One entry
+    * is rendered at a time. */
+   menu_entry_t render_entry;
+   char render_sublabel_buf[MENU_LABEL_MAX_LENGTH];
    char menu_sublabel[MENU_LABEL_MAX_LENGTH];     /* Must be a fixed length array... */
 } rgui_t;
 
@@ -6255,7 +6262,7 @@ static void rgui_render(void *data, unsigned width, unsigned height,
       {
          char entry_title_buf[NAME_MAX_LENGTH];
          char type_str_buf[NAME_MAX_LENGTH];
-         menu_entry_t entry;
+         menu_entry_t *entry = &rgui->render_entry;
          const char *entry_value                     = NULL;
          size_t entry_title_max_len                  = 0;
          unsigned entry_value_len                    = 0;
@@ -6272,15 +6279,15 @@ static void rgui_render(void *data, unsigned width, unsigned height,
          type_str_buf[0]     = '\0';
 
          /* Get current entry */
-         MENU_ENTRY_INITIALIZE(entry);
-         entry.flags        |= MENU_ENTRY_FLAG_RICH_LABEL_ENABLED
+         MENU_ENTRY_INITIALIZE((*entry));
+         entry->flags        |= MENU_ENTRY_FLAG_RICH_LABEL_ENABLED
                              | MENU_ENTRY_FLAG_VALUE_ENABLED;
-         menu_entry_get(&entry, 0, (unsigned)i, NULL, true);
+         menu_entry_get(entry, 0, (unsigned)i, NULL, true);
 
-         if (entry.enum_idx == MENU_ENUM_LABEL_CHEEVOS_PASSWORD)
-            entry_value      = entry.password_value;
+         if (entry->enum_idx == MENU_ENUM_LABEL_CHEEVOS_PASSWORD)
+            entry_value      = entry->password_value;
          else
-            entry_value      = entry.value;
+            entry_value      = entry->value;
 
          /* Get base length of entry title field */
          entry_title_max_len = rgui->term_layout.width - (1 + 2);
@@ -6325,8 +6332,8 @@ static void rgui_render(void *data, unsigned width, unsigned height,
          /* Get 'type' of entry value component */
          entry_value_type = rgui_get_entry_value_type(
                entry_value,
-               entry.setting_type,
-               (entry.flags & MENU_ENTRY_FLAG_CHECKED) ? true : false,
+               entry->setting_type,
+               (entry->flags & MENU_ENTRY_FLAG_CHECKED) ? true : false,
                rgui_switch_icons);
 
          switch (entry_value_type)
@@ -6338,7 +6345,7 @@ static void rgui_render(void *data, unsigned width, unsigned height,
                 * down' to current value_maxlen */
                entry_value_len = rgui_full_width_layout
                      ? (unsigned)utf8len(entry_value)
-                     : entry.spacing;
+                     : entry->spacing;
 
                entry_value_len = (entry_value_len > rgui->term_layout.value_maxlen)
                      ? rgui->term_layout.value_maxlen
@@ -6372,10 +6379,10 @@ static void rgui_render(void *data, unsigned width, unsigned height,
          {
             ticker_smooth.selected    = entry_selected;
             ticker_smooth.field_width = (unsigned)(entry_title_max_len * rgui->font_width_stride);
-            if (*entry.rich_label)
-               ticker_smooth.src_str  = entry.rich_label;
+            if (*entry->rich_label)
+               ticker_smooth.src_str  = entry->rich_label;
             else
-               ticker_smooth.src_str  = entry.path;
+               ticker_smooth.src_str  = entry->path;
             ticker_smooth.dst_str     = entry_title_buf;
             ticker_smooth.dst_str_len = sizeof(entry_title_buf);
             ticker_smooth.x_offset    = &ticker_x_offset;
@@ -6387,10 +6394,10 @@ static void rgui_render(void *data, unsigned width, unsigned height,
             ticker.s                  = entry_title_buf;
             ticker.s_len              = sizeof(entry_title_buf);
             ticker.len                = entry_title_max_len;
-            if (*entry.rich_label)
-               ticker.str             = entry.rich_label;
+            if (*entry->rich_label)
+               ticker.str             = entry->rich_label;
             else
-               ticker.str             = entry.path;
+               ticker.str             = entry->path;
             ticker.selected           = entry_selected;
 
             gfx_animation_ticker(&ticker);
@@ -6540,7 +6547,7 @@ static void rgui_render(void *data, unsigned width, unsigned height,
       /* Print menu sublabel/core name (if required) */
       if (menu_show_sublabels && *rgui->menu_sublabel)
       {
-         char sublabel_buf[MENU_LABEL_MAX_LENGTH];
+         char *sublabel_buf = rgui->render_sublabel_buf;
          sublabel_buf[0] = '\0';
 
          if (use_smooth_ticker)
@@ -6549,7 +6556,7 @@ static void rgui_render(void *data, unsigned width, unsigned height,
             ticker_smooth.field_width = (rgui->term_layout.width - sublabel_len) * rgui->font_width_stride;
             ticker_smooth.src_str     = rgui->menu_sublabel;
             ticker_smooth.dst_str     = sublabel_buf;
-            ticker_smooth.dst_str_len = sizeof(sublabel_buf);
+            ticker_smooth.dst_str_len = MENU_LABEL_MAX_LENGTH;
             ticker_smooth.x_offset    = &ticker_x_offset;
 
             gfx_animation_ticker_smooth(&ticker_smooth);
@@ -6557,7 +6564,7 @@ static void rgui_render(void *data, unsigned width, unsigned height,
          else
          {
             ticker.s                  = sublabel_buf;
-            ticker.s_len              = sizeof(sublabel_buf);
+            ticker.s_len              = MENU_LABEL_MAX_LENGTH;
             ticker.len                = rgui->term_layout.width - sublabel_len;
             ticker.str                = rgui->menu_sublabel;
             ticker.selected           = true;
